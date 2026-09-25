@@ -6372,7 +6372,6 @@ module Crystal
 
           if visibility
             member = VisibilityModifier.new(visibility, member).at(location)
-            member.doc = doc
           end
 
           members << member
