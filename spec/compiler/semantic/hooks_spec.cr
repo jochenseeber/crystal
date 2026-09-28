@@ -276,4 +276,18 @@ describe "Semantic: hooks" do
     hook = result.program.finished_hooks.find! { |h| h.node.to_s.includes?("ITEMS") }
     hook.node.to_s.should eq("ITEMS = [Item.new(name: :a)] of Item")
   end
+
+  it "errors on an inherited hook that keeps defining subclasses (#9413)" do
+    assert_error <<-CRYSTAL, "macro expansion nested more than 300 levels deep"
+      class Base
+        macro inherited
+          class ::{{@type.name.id}}X < ::{{@type}}
+          end
+        end
+      end
+
+      class Foo < Base
+      end
+      CRYSTAL
+  end
 end
