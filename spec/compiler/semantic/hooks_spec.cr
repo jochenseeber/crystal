@@ -257,6 +257,20 @@ describe "Semantic: hooks" do
       CRYSTAL
   end
 
+  it "errors on an inherited hook that keeps defining subclasses (#9413)" do
+    assert_error <<-CRYSTAL, "macro expansion nested more than 300 levels deep"
+      class Base
+        macro inherited
+          class ::{{@type.name.id}}X < ::{{@type}}
+          end
+        end
+      end
+
+      class Foo < Base
+      end
+      CRYSTAL
+  end
+
   it "leaves finished hook expansions alone when cleanup is off" do
     compiler = Compiler.new
     compiler.no_codegen = true
