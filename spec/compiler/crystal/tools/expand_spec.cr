@@ -683,19 +683,19 @@ describe "expand" do
     assert_expand_simple code, original: "foo", expanded: "1"
   end
 
-  it "leaves out an annotation that the macro it is above reads" do
+  it "leaves out an annotation that the macro it is above deletes" do
     code = <<-CRYSTAL
     annotation Desc
     end
 
     macro reading(name)
-      {% @caller.first.annotation(Desc) %}
+      {% @caller.first.delete_annotation(Desc) %}
       def {{name.id}}
       end
     end
 
     macro passing_on(name)
-      {% desc = @caller.first.annotation(Desc) %}
+      {% desc = @caller.first.delete_annotation(Desc) %}
       @[Desc({{desc[0]}})]
       reading {{name}}
     end
