@@ -625,6 +625,32 @@ describe "expand" do
     assert_expand_simple code, original: "foo(hello)", expanded: expanded + '\n'
   end
 
+  it "leaves out an annotation that the macro it is above reads" do
+    code = <<-CRYSTAL
+    annotation Desc
+    end
+
+    macro reading(name)
+      {% @caller.first.annotation(Desc) %}
+      def {{name.id}}
+      end
+    end
+
+    macro passing_on(name)
+      {% desc = @caller.first.annotation(Desc) %}
+      @[Desc({{desc[0]}})]
+      reading {{name}}
+    end
+
+    class Foo
+      @[Desc("passed on")]
+      ‸passing_on c
+    end
+    CRYSTAL
+
+    assert_expand code, [["passing_on(c)", "@[Desc(\"passed on\")]\nreading(c)\n", "def c\nend\n"]]
+  end
+
   it "expands macro inside def called from an instance variable initializer" do
     code = <<-CRYSTAL
     macro foo
