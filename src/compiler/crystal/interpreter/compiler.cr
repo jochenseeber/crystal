@@ -1690,7 +1690,8 @@ class Crystal::Repl::Compiler < Crystal::Visitor
       return false
     end
 
-    filtered_type = obj_type.filter_by(to_type)
+    # Filter and check a virtual struct as the union of its subtypes, as `is_a` does
+    filtered_type = obj_type.remove_indirection.filter_by(to_type)
     unless filtered_type
       # If .as?(...) has no resulting type we must cast
       # whatever type we have to nil.
@@ -1709,7 +1710,7 @@ class Crystal::Repl::Compiler < Crystal::Visitor
 
     # Check if obj is a `to_type`
     dup aligned_sizeof_type(node.obj), node: nil
-    filter_type(node, obj_type, filtered_type)
+    filter_type(node, obj_type.remove_indirection, filtered_type)
 
     # If so, branch
     branch_if 0, node: nil
