@@ -1,0 +1,214 @@
+name: Ext release
+
+# Releases `<base>+ext.x` branches: an upstream release plus not yet merged
+# pull requests. Each push tags the next `<base>+ext.<n>`, builds the release
+# archives, publishes them as a GitHub release and updates the `crystal-ext`
+# formula in jochenseeber/homebrew-tap. The scripts live in .github/ext-release.
+#
+# Requires the repository secret:
+#   HOMEBREW_TAP_DEPLOY_KEY  SSH private key whose public key is a write deploy
+#                            key on jochenseeber/homebrew-tap
+
+on:
+  push:
+    branches:
+      - '*\+ext.x'
+  workflow_dispatch:
+
+permissions: {}
+
+concurrency:
+  group: ext-release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  # Tags the release. The release commit sets the version and is reachable only
+  # from the tag, so the branch never moves. Nothing happens when the branch
+  # head is already released.
+  version:
+    name: Tag the next version
+    if: endsWith(github.ref_name, '+ext.x')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    outputs:
+      base: ${{ steps.next.outputs.base }}
+      version: ${{ steps.next.outputs.version }}
+      released: ${{ steps.next.outputs.released }}
+      commit: ${{ steps.tag.outputs.commit }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - id: next
+        run: .github/ext-release/next-version.sh "$GITHUB_REF_NAME" | tee -a "$GITHUB_OUTPUT"
+
+      - id: tag
+        if: steps.next.outputs.released == ''
+        env:
+          VERSION: ${{ steps.next.outputs.version }}
+        run: |
+          set -eu
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          .github/ext-release/tag-release.sh "$VERSION"
+          git push origin "refs/tags/$VERSION"
+          echo "commit=$(git rev-parse --short HEAD)" >>"$GITHUB_OUTPUT"
+
+  # Fully static binaries, built in the official Alpine image of the upstream
+  # release on an arch-matched runner. actions/checkout and upload-artifact are
+  # JavaScript actions; GitHub ships the musl Node only for x64, so on arm64
+  # laverdet/alpine-arm64 makes the container fall back to the glibc Node.
+  build-linux:
+    name: Build linux-${{ matrix.arch }}-musl-static
+    needs: version
+    if: needs.version.outputs.released == ''
+    runs-on: ${{ matrix.runner }}
+    container: crystallang/crystal:${{ needs.version.outputs.base }}-alpine
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: amd64
+            runner: ubuntu-latest
+          - arch: arm64
+            runner: ubuntu-24.04-arm
+    env:
+      PROFILE: linux-${{ matrix.arch }}-musl-static
+      CRYSTAL_CONFIG_BUILD_COMMIT: ${{ needs.version.outputs.commit }}
+    steps:
+      - uses: laverdet/alpine-arm64@v1
+        if: matrix.arch == 'arm64'
+
+      - uses: actions/checkout@v7
+        with:
+          ref: refs/tags/${{ needs.version.outputs.version }}
+
+      - run: sh .github/ext-release/build.sh "$PROFILE" dist
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: crystal-${{ env.PROFILE }}
+          path: dist/crystal-${{ env.PROFILE }}.tar.gz
+
+  build-macos:
+    name: Build darwin-arm64-system-static
+    needs: version
+    if: needs.version.outputs.released == ''
+    runs-on: macos-15
+    permissions:
+      contents: read
+    env:
+      PROFILE: darwin-arm64-system-static
+      CRYSTAL_CONFIG_BUILD_COMMIT: ${{ needs.version.outputs.commit }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: refs/tags/${{ needs.version.outputs.version }}
+
+      # The upstream release the branch builds on compiles the compiler.
+      - uses: crystal-lang/install-crystal@v1
+        with:
+          crystal: ${{ needs.version.outputs.base }}
+
+      - run: .github/ext-release/build.sh "$PROFILE" dist
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: crystal-${{ env.PROFILE }}
+          path: dist/crystal-${{ env.PROFILE }}.tar.gz
+
+  release:
+    name: Publish GitHub release
+    needs: [version, build-linux, build-macos]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    env:
+      BASE: ${{ needs.version.outputs.base }}
+      VERSION: ${{ needs.version.outputs.version }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: refs/tags/${{ needs.version.outputs.version }}
+          fetch-depth: 0
+
+      # The notes list the commits on top of the upstream release. A fork doesn't
+      # get upstream's tags, so fetch the base tag.
+      - name: Write release notes
+        run: |
+          set -eu
+          git fetch --quiet --no-tags https://github.com/crystal-lang/crystal.git "refs/tags/$BASE:refs/tags/$BASE"
+          {
+            echo "Crystal $BASE with these commits from not yet merged pull requests:"
+            echo
+            git log --reverse --no-merges --format='- %s' "$BASE..$VERSION^"
+          } >notes.md
+
+      - uses: actions/download-artifact@v8
+        with:
+          path: dist
+          pattern: crystal-*
+          merge-multiple: true
+
+      - uses: softprops/action-gh-release@v3
+        with:
+          tag_name: ${{ needs.version.outputs.version }}
+          name: Crystal ${{ needs.version.outputs.version }}
+          body_path: notes.md
+          files: dist/crystal-*.tar.gz
+          fail_on_unmatched_files: true
+
+  # Publishes the formula to the tap over SSH with a write deploy key, so it is
+  # installed with `brew install jochenseeber/tap/crystal-ext`.
+  homebrew:
+    name: Update Homebrew formula
+    needs: [version, release]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    env:
+      VERSION: ${{ needs.version.outputs.version }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: refs/tags/${{ needs.version.outputs.version }}
+
+      - uses: actions/download-artifact@v8
+        with:
+          path: dist
+          pattern: crystal-*
+          merge-multiple: true
+
+      - name: Publish formula
+        env:
+          TAP_DEPLOY_KEY: ${{ secrets.HOMEBREW_TAP_DEPLOY_KEY }}
+        run: |
+          set -eu
+          if [ -z "$TAP_DEPLOY_KEY" ]; then
+            echo "::error::Secret HOMEBREW_TAP_DEPLOY_KEY is not set." >&2
+            exit 1
+          fi
+          mkdir -p ~/.ssh
+          printf '%s\n' "$TAP_DEPLOY_KEY" >~/.ssh/tap_deploy_key
+          chmod 600 ~/.ssh/tap_deploy_key
+          ssh-keyscan github.com >>~/.ssh/known_hosts 2>/dev/null
+          export GIT_SSH_COMMAND="ssh -i ~/.ssh/tap_deploy_key -o IdentitiesOnly=yes"
+
+          git clone --depth 1 git@github.com:jochenseeber/homebrew-tap.git tap
+          mkdir -p tap/Formula
+          .github/ext-release/formula.sh "$VERSION" dist >tap/Formula/crystal-ext.rb
+
+          cd tap
+          git add Formula/crystal-ext.rb
+          if git diff --cached --quiet; then
+            echo "Tap already up to date"
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git commit --quiet --message "crystal-ext $VERSION"
+          git push origin HEAD
