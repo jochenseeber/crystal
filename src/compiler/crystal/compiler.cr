@@ -782,9 +782,13 @@ module Crystal
         optimization_mode = @optimization_mode
         optimization_mode = OptimizationMode::O2 if optimization_mode.os? || optimization_mode.oz?
 
+        # Most instances of a method that compile to identical code are
+        # identical before optimization already, so merging them first saves
+        # optimizing each of them. The merge at the end of the pipeline
+        # catches instances that only optimization made identical.
         LLVM::PassBuilderOptions.new do |options|
           options.set_merge_functions(true)
-          LLVM.run_passes(llvm_mod, "default<#{optimization_mode}>", target_machine, options)
+          LLVM.run_passes(llvm_mod, "mergefunc,default<#{optimization_mode}>", target_machine, options)
         end
       {% end %}
     end
