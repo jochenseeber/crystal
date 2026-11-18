@@ -2016,6 +2016,12 @@ module Crystal
       context.fun = func.func
       context.fun_type = type
       context.fun.linkage = LLVM::Linkage::Internal if @single_module
+
+      # Keeps MergeFunctions from merging generated functions, like `~match`
+      # or a constant's initializer, with any other function (see
+      # `#codegen_fun`)
+      context.fun.add_attribute "crystal-def", value: name
+
       if needs_alloca
         new_entry_block
         yield func.func

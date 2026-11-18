@@ -127,9 +127,12 @@ class Crystal::CodeGenVisitor
 
         # LLVM's MergeFunctions only merges functions with equal attributes,
         # so this lets it merge instances of a method, but not different
-        # methods, which a backtrace would then confuse
+        # methods, which a backtrace would then confuse. A def without a
+        # location gets its mangled name, which no other function has.
         if location = target_def.location.try(&.expanded_location)
           context.fun.add_attribute "crystal-def", value: "#{location} #{target_def.name}"
+        else
+          context.fun.add_attribute "crystal-def", value: mangled_name
         end
 
         new_entry_block
