@@ -74,7 +74,7 @@ module Crystal
     @observers : SmallNodeList = SmallNodeList.new
     property enclosing_call : Call?
 
-    @dirty = false
+    # @dirty is declared in syntax/ast.cr (first ivar, packs after the type id)
 
     @type : Type?
 

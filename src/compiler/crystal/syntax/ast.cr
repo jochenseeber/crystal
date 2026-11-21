@@ -37,6 +37,9 @@ end
 module Crystal
   # Base class for nodes in the grammar.
   abstract class ASTNode
+    # Declared first so it fills the 4-byte gap after the type id header.
+    @dirty : Bool = false
+
     # The location where this node starts, or `nil`
     # if the location is not known.
     property location : Location?
