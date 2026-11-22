@@ -35,6 +35,22 @@ end
 module Crystal
   # Base class for nodes in the grammar.
   abstract class ASTNode
+    # Defines a property of type `Int32?` for a value that is never negative,
+    # stored as an `Int32` with `-1` for `nil`. An `Int32?` instance variable
+    # is a union that takes 16 bytes; the `Int32` takes 4.
+    private macro property_positive_optional_int32(name)
+      @{{name.id}} : Int32 = -1
+
+      def {{name.id}} : Int32?
+        @{{name.id}} unless @{{name.id}} < 0
+      end
+
+      def {{name.id}}=(value : Int32?) : Int32?
+        @{{name.id}} = value || -1
+        value
+      end
+    end
+
     # The location where this node starts, or `nil`
     # if the location is not known.
     property location : Location?
@@ -848,15 +864,16 @@ module Crystal
     property args : Array(Var)
     property body : ASTNode
     property call : Call?
-    property splat_index : Int32?
+    property_positive_optional_int32 splat_index
 
     # When a block argument unpacks, the corresponding Var will
     # have an empty name, and `unpacks` will have the unpacked
     # Expressions in that index.
     property unpacks : Hash(Int32, Expressions)?
 
-    def initialize(@args = [] of Var, body = nil, @splat_index = nil, @unpacks = nil)
+    def initialize(@args = [] of Var, body = nil, splat_index = nil, @unpacks = nil)
       @body = Expressions.from body
+      self.splat_index = splat_index
     end
 
     def accept_children(visitor)
@@ -866,7 +883,7 @@ module Crystal
     end
 
     def clone_without_location
-      Block.new(@args.clone, @body.clone, @splat_index, @unpacks.clone)
+      Block.new(@args.clone, @body.clone, splat_index, @unpacks.clone)
     end
 
     def has_any_args?
@@ -1486,24 +1503,30 @@ module Crystal
     property body : ASTNode
     property block_arg : Arg?
     property return_type : ASTNode?
+    property name_location : Location?
+    property doc : String?
+
+    # The fields below are smaller than a pointer. They are declared last and
+    # together, so that they fill 16 bytes without padding. The fields that
+    # later files add to `Def` are ordered the same way.
+
     # Number of block arguments accepted by this method.
     # `nil` if it does not receive a block.
-    property block_arity : Int32?
-    property name_location : Location?
-    property splat_index : Int32?
-    property doc : String?
-    property visibility = Visibility::Public
-
+    property_positive_optional_int32 block_arity
+    property_positive_optional_int32 splat_index
+    property visibility : Visibility = Visibility::Public
     property? macro_def : Bool
-    property? calls_super = false
-    property? calls_initialize = false
-    property? calls_previous_def = false
-    property? uses_block_arg = false
-    property? assigns_special_var = false
     property? abstract : Bool
+    property? calls_super : Bool = false
+    property? calls_initialize : Bool = false
+    property? calls_previous_def : Bool = false
+    property? uses_block_arg : Bool = false
+    property? assigns_special_var : Bool = false
 
-    def initialize(@name, @args = [] of Arg, body = nil, @receiver = nil, @block_arg = nil, @return_type = nil, @macro_def = false, @block_arity = nil, @abstract = false, @splat_index = nil, @double_splat = nil, @free_vars = nil)
+    def initialize(@name, @args = [] of Arg, body = nil, @receiver = nil, @block_arg = nil, @return_type = nil, @macro_def = false, block_arity = nil, @abstract = false, splat_index = nil, @double_splat = nil, @free_vars = nil)
       @body = Expressions.from body
+      self.block_arity = block_arity
+      self.splat_index = splat_index
     end
 
     def accept_children(visitor)
@@ -1516,7 +1539,7 @@ module Crystal
     end
 
     def clone_without_location
-      a_def = Def.new(@name, @args.clone, @body.clone, @receiver.clone, @block_arg.clone, @return_type.clone, @macro_def, @block_arity, @abstract, @splat_index, @double_splat.clone, @free_vars)
+      a_def = Def.new(@name, @args.clone, @body.clone, @receiver.clone, @block_arg.clone, @return_type.clone, @macro_def, block_arity, @abstract, splat_index, @double_splat.clone, @free_vars)
       a_def.calls_super = calls_super?
       a_def.calls_initialize = calls_initialize?
       a_def.calls_previous_def = calls_previous_def?
@@ -1564,11 +1587,12 @@ module Crystal
     property double_splat : Arg?
     property block_arg : Arg?
     property name_location : Location?
-    property splat_index : Int32?
     property doc : String?
-    property visibility = Visibility::Public
+    property_positive_optional_int32 splat_index
+    property visibility : Visibility = Visibility::Public
 
-    def initialize(@name, @args = [] of Arg, @body = Nop.new, @block_arg = nil, @splat_index = nil, @double_splat = nil)
+    def initialize(@name, @args = [] of Arg, @body = Nop.new, @block_arg = nil, splat_index = nil, @double_splat = nil)
+      self.splat_index = splat_index
     end
 
     def accept_children(visitor)
@@ -1579,7 +1603,7 @@ module Crystal
     end
 
     def clone_without_location
-      m = Macro.new(@name, @args.clone, @body.clone, @block_arg.clone, @splat_index, @double_splat.clone)
+      m = Macro.new(@name, @args.clone, @body.clone, @block_arg.clone, splat_index, @double_splat.clone)
       m.name_location = name_location
       m
     end
@@ -1995,13 +2019,14 @@ module Crystal
     property type_vars : Array(String)?
     property name_location : Location?
     property doc : String?
-    property splat_index : Int32?
+    property_positive_optional_int32 splat_index
     property? abstract : Bool
     property? struct : Bool
     property visibility = Visibility::Public
 
-    def initialize(@name, body = nil, @superclass = nil, @type_vars = nil, @abstract = false, @struct = false, @splat_index = nil)
+    def initialize(@name, body = nil, @superclass = nil, @type_vars = nil, @abstract = false, @struct = false, splat_index = nil)
       @body = Expressions.from body
+      self.splat_index = splat_index
     end
 
     def accept_children(visitor)
@@ -2010,7 +2035,7 @@ module Crystal
     end
 
     def clone_without_location
-      clone = ClassDef.new(@name, @body.clone, @superclass.clone, @type_vars.clone, @abstract, @struct, @splat_index)
+      clone = ClassDef.new(@name, @body.clone, @superclass.clone, @type_vars.clone, @abstract, @struct, splat_index)
       clone.name_location = name_location
       clone
     end
@@ -2039,13 +2064,14 @@ module Crystal
     property name : Path
     property body : ASTNode
     property type_vars : Array(String)?
-    property splat_index : Int32?
+    property_positive_optional_int32 splat_index
     property name_location : Location?
     property doc : String?
     property visibility = Visibility::Public
 
-    def initialize(@name, body = nil, @type_vars = nil, @splat_index = nil)
+    def initialize(@name, body = nil, @type_vars = nil, splat_index = nil)
       @body = Expressions.from body
+      self.splat_index = splat_index
     end
 
     def accept_children(visitor)
@@ -2053,7 +2079,7 @@ module Crystal
     end
 
     def clone_without_location
-      clone = ModuleDef.new(@name, @body.clone, @type_vars.clone, @splat_index)
+      clone = ModuleDef.new(@name, @body.clone, @type_vars.clone, splat_index)
       clone.name_location = name_location
       clone
     end
