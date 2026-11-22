@@ -35,14 +35,22 @@ private def pp_join(pp, ary)
 end
 
 module Crystal
+  # Declared before the nodes, so that `property_flag` can find out how many
+  # bits it needs.
+  enum Visibility : Int8
+    Public
+    Protected
+    Private
+  end
+
   # Base class for nodes in the grammar.
   abstract class ASTNode
     # Small properties of nodes, packed into bit fields (see `property_flag`).
-    # It is declared first so that it fits into the padding after the type id
-    # instead of taking up 8 bytes between two pointers. It needs the
+    # It is declared first so that it fills the 4 bytes of padding after the
+    # type id instead of taking up 8 bytes between two pointers. It needs the
     # explicit type: instance variables with an inferred type are laid out
     # after all the ones declared with a type.
-    @flags : UInt16 = 0
+    @flags : UInt32 = 0
 
     # Defines a property that is stored in a range of bits of `@flags`
     # instead of bytes of its own:
@@ -51,7 +59,7 @@ module Crystal
     # * `property_flag name : SomeEnum = SomeEnum::Value`: an enum, as wide as
     #   its largest value needs
     # * `property_flag name : UInt8 = 0, bits: 3`: an unsigned integer of
-    #   *bits* bits
+    #   *bits* bits (at most 31)
     #
     # Type (default: `Bool`) and default value are optional.
     #
@@ -59,8 +67,10 @@ module Crystal
     # node mean the default. The range is the lowest one that this class, its
     # ancestors and its subclasses don't use yet, recorded as the constant
     # `FLAG_BITS_<NAME> = {offset, width}`. With *setter* `false` the setter
-    # is private.
-    private macro property_flag(decl, *, bits = nil, setter = true)
+    # is private. The getter of a `Bool` is `name?`, or `name` with
+    # *predicate* `false`. A name that is a keyword can be given as a symbol:
+    # `property_flag :abstract`.
+    private macro property_flag(decl, *, bits = nil, setter = true, predicate = true)
       {% if decl.is_a?(TypeDeclaration) %}
         {% name = decl.var.id %}
         {% type = decl.type.resolve %}
@@ -82,15 +92,19 @@ module Crystal
           {% max = value if value > max %}
         {% end %}
         {% width = 1 %}
-        {% for i in 1..15 %}
-          {% width = i + 1 if max >= (1 << i) %}
+        {% for i in 1..31 %}
+          {% if max > 1 %}
+            {% max = max // 2 %}
+            {% width = width + 1 %}
+          {% end %}
         {% end %}
-      {% elsif [UInt8, UInt16].includes?(type) %}
+      {% elsif [UInt8, UInt16, UInt32].includes?(type) %}
         {% raise "Flag property #{@type}##{name} of type #{type} needs `bits:`" unless bits %}
         {% width = bits %}
       {% else %}
         {% raise "Flag property #{@type}##{name} can't have type #{type}" %}
       {% end %}
+      {% raise "Flag property #{@type}##{name} needs #{width} bits, at most 31 are allowed" if width > 31 %}
 
       {% used = [] of NumberLiteral %}
       {% for owner in [@type] + @type.ancestors.select { |a| a <= ::Crystal::ASTNode } + @type.all_subclasses %}
@@ -102,7 +116,7 @@ module Crystal
         {% end %}
       {% end %}
       {% offset = nil %}
-      {% for candidate in 0..(16 - width) %}
+      {% for candidate in 0..(32 - width) %}
         {% if offset.nil? %}
           {% free = true %}
           {% for i in 0...width %}
@@ -118,7 +132,7 @@ module Crystal
       FLAG_BITS_{{name.upcase}} = { {{offset}}, {{width}} }
 
       {% if type == Bool %}
-        def {{name}}? : Bool
+        def {{name}}{{"?".id if predicate}} : Bool
           (@flags.bit({{offset}}) == 1) != {{default}}
         end
       {% else %}
@@ -134,14 +148,14 @@ module Crystal
 
       {{"private ".id unless setter}}def {{name}}=(value : {{type}}) : {{type}}
         {% if type == Bool %}
-          raw = value != {{default}} ? 1_u16 : 0_u16
+          raw = value != {{default}} ? 1_u32 : 0_u32
         {% elsif type < Enum %}
-          raw = (value.value ^ {{default}}.value).to_u16! & {{mask}}
+          raw = (value.value ^ {{default}}.value).to_u32! & {{mask}}
         {% else %}
           ::raise ArgumentError.new("#{value} does not fit into {{width}} bits") if value > {{mask}}
-          raw = (value ^ {{default}}).to_u16!
+          raw = (value ^ {{default}}).to_u32!
         {% end %}
-        @flags = (@flags & ~({{mask}}_u16 << {{offset}})) | (raw << {{offset}})
+        @flags = (@flags & ~({{mask}}_u32 << {{offset}})) | (raw << {{offset}})
         value
       end
     end
@@ -438,13 +452,14 @@ module Crystal
   #     'true' | 'false'
   #
   class BoolLiteral < ASTNode
-    property value : Bool
+    property_flag value : Bool = false, predicate: false
 
-    def initialize(@value)
+    def initialize(value : Bool)
+      self.value = value
     end
 
     def clone_without_location
-      BoolLiteral.new(@value)
+      BoolLiteral.new(value)
     end
 
     def_equals_and_hash value
@@ -1172,14 +1187,15 @@ module Crystal
     property cond : ASTNode
     property then : ASTNode
     property else : ASTNode
-    property? ternary : Bool
+    property_flag ternary
 
     # The location of the `else` keyword if present.
     property else_location : Location?
 
-    def initialize(@cond, a_then = nil, a_else = nil, @ternary = false)
+    def initialize(@cond, a_then = nil, a_else = nil, ternary = false)
       @then = Expressions.from a_then
       @else = Expressions.from a_else
+      self.ternary = ternary
     end
 
     def accept_children(visitor)
@@ -1189,7 +1205,7 @@ module Crystal
     end
 
     def clone_without_location
-      If.new(@cond.clone, @then.clone, @else.clone, @ternary)
+      If.new(@cond.clone, @then.clone, @else.clone, ternary?)
     end
 
     def_equals_and_hash @cond, @then, @else
@@ -1608,25 +1624,28 @@ module Crystal
     property doc : String?
 
     # The fields below are smaller than a pointer. They are declared last and
-    # together, so that they fill 16 bytes without padding. The fields that
+    # together, so that they fill 8 bytes without padding. The fields that
     # later files add to `Def` are ordered the same way.
 
     # Number of block arguments accepted by this method.
     # `nil` if it does not receive a block.
     property_positive_optional_int32 block_arity
     property_positive_optional_int32 splat_index
-    property visibility : Visibility = Visibility::Public
-    property? macro_def : Bool
-    property? abstract : Bool
-    property? calls_super : Bool = false
-    property? calls_initialize : Bool = false
-    property? calls_previous_def : Bool = false
-    property? uses_block_arg : Bool = false
-    property? assigns_special_var : Bool = false
 
-    def initialize(@name, @args = [] of Arg, body = nil, @receiver = nil, @block_arg = nil, @return_type = nil, @macro_def = false, block_arity = nil, @abstract = false, splat_index = nil, @double_splat = nil, @free_vars = nil)
+    property_flag visibility : Visibility = Visibility::Public
+    property_flag macro_def
+    property_flag :abstract
+    property_flag calls_super
+    property_flag calls_initialize
+    property_flag calls_previous_def
+    property_flag uses_block_arg
+    property_flag assigns_special_var
+
+    def initialize(@name, @args = [] of Arg, body = nil, @receiver = nil, @block_arg = nil, @return_type = nil, macro_def = false, block_arity = nil, abstract is_abstract = false, splat_index = nil, @double_splat = nil, @free_vars = nil)
       @body = Expressions.from body
+      self.macro_def = macro_def
       self.block_arity = block_arity
+      self.abstract = is_abstract
       self.splat_index = splat_index
     end
 
@@ -1644,7 +1663,7 @@ module Crystal
     end
 
     def clone_without_location
-      a_def = Def.new(@name, @args.clone, @body.clone, @receiver.clone, @block_arg.clone, @return_type.clone, @macro_def, block_arity, @abstract, splat_index, @double_splat.clone, @free_vars)
+      a_def = Def.new(@name, @args.clone, @body.clone, @receiver.clone, @block_arg.clone, @return_type.clone, macro_def?, block_arity, abstract?, splat_index, @double_splat.clone, @free_vars)
       a_def.calls_super = calls_super?
       a_def.calls_initialize = calls_initialize?
       a_def.calls_previous_def = calls_previous_def?
@@ -1655,7 +1674,7 @@ module Crystal
       a_def
     end
 
-    def_equals_and_hash @name, @args, @body, @receiver, @block_arg, @return_type, @macro_def, @block_arity, @abstract, @splat_index, @double_splat
+    def_equals_and_hash @name, @args, @body, @receiver, @block_arg, @return_type, macro_def?, @block_arity, abstract?, @splat_index, @double_splat
 
     def autogenerated?
       location == body.location
@@ -2067,10 +2086,12 @@ module Crystal
   #
   class Path < ASTNode
     property names : Array(String)
-    property? global : Bool
-    property visibility = Visibility::Public
 
-    def initialize(@names : Array, @global = false)
+    property_flag global
+    property_flag visibility : Visibility = Visibility::Public
+
+    def initialize(@names : Array, global = false)
+      self.global = global
     end
 
     def self.new(name : String, global = false)
@@ -2101,11 +2122,11 @@ module Crystal
     end
 
     def clone_without_location
-      ident = Path.new(@names.clone, @global)
+      ident = Path.new(@names.clone, global?)
       ident
     end
 
-    def_equals_and_hash @names, @global
+    def_equals_and_hash @names, global?
 
     def pretty_print(pp) : Nil
       if global?
@@ -2312,8 +2333,6 @@ module Crystal
     property type_vars : Array(ASTNode)
     property named_args : Array(NamedArgument)?
 
-    property suffix : Suffix
-
     enum Suffix
       None
       Question # T?
@@ -2321,7 +2340,10 @@ module Crystal
       Bracket  # T[N]
     end
 
-    def initialize(@name, @type_vars : Array, @named_args = nil, @suffix = Suffix::None)
+    property_flag suffix : Suffix = Suffix::None
+
+    def initialize(@name, @type_vars : Array, @named_args = nil, suffix : Suffix = Suffix::None)
+      self.suffix = suffix
     end
 
     def self.new(name, type_var : ASTNode)
@@ -2335,7 +2357,7 @@ module Crystal
     end
 
     def clone_without_location
-      generic = Generic.new(@name.clone, @type_vars.clone, @named_args.clone, @suffix)
+      generic = Generic.new(@name.clone, @type_vars.clone, @named_args.clone, suffix)
       generic
     end
 
@@ -3476,12 +3498,6 @@ module Crystal
         exp.pretty_print(pp)
       end
     end
-  end
-
-  enum Visibility : Int8
-    Public
-    Protected
-    Private
   end
 end
 

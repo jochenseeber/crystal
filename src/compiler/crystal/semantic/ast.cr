@@ -164,22 +164,23 @@ module Crystal
     # (see `syntax/ast.cr`).
 
     property block_nest : Int32 = 0
-    property? raises : Bool = false
-    property? closure : Bool = false
-    property? self_closured : Bool = false
-    property? captured_block : Bool = false
+
+    property_flag raises
+    property_flag closure
+    property_flag self_closured
+    property_flag captured_block
 
     # `true` if this def has the `@[NoInline]` annotation
-    property? no_inline : Bool = false
+    property_flag no_inline
 
     # `true` if this def has the `@[AlwaysInline]` annotation
-    property? always_inline : Bool = false
+    property_flag always_inline
 
     # `true` if this def has the `@[ReturnsTwice]` annotation
-    property? returns_twice : Bool = false
+    property_flag returns_twice
 
     # `true` if this def has the `@[Naked]` annotation
-    property? naked : Bool = false
+    property_flag naked
 
     # Is this a `new` method that was expanded from an initialize?
     property? new : Bool = false
@@ -428,16 +429,16 @@ module Crystal
 
   class If
     # This is set to `true` for an `If` that was created from an `&&` expression.
-    property? and = false
+    property_flag :and
 
     # This is set to `true` for an `If` that was created from an `||` expression.
-    property? or = false
+    property_flag :or
 
     # This is set to `true` when the compiler is sure that the condition is truthy
-    property? truthy = false
+    property_flag truthy
 
     # This is set to `true` when the compiler is sure that the condition is falsey
-    property? falsey = false
+    property_flag falsey
 
     def clone_without_location
       a_if = previous_def
