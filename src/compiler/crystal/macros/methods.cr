@@ -483,7 +483,7 @@ module Crystal
 
   class BoolLiteral
     def to_macro_id
-      @value ? "true" : "false"
+      value ? "true" : "false"
     end
   end
 
@@ -1689,10 +1689,10 @@ module Crystal
         interpret_check_args { @receiver || Nop.new }
       when "visibility"
         interpret_check_args do
-          visibility_to_symbol(@visibility)
+          visibility_to_symbol(visibility)
         end
       when "abstract?"
-        interpret_check_args { BoolLiteral.new(@abstract) }
+        interpret_check_args { BoolLiteral.new(abstract?) }
       when "annotation"
         fetch_annotation(self, method, args, named_args, block) do |type|
           self.annotation(type)
@@ -2731,9 +2731,9 @@ module Crystal
         end
       when "global"
         interpreter.warnings.add_warning_at(name_loc, "Deprecated Path#global. Use `#global?` instead")
-        interpret_check_args { BoolLiteral.new(@global) }
+        interpret_check_args { BoolLiteral.new(global?) }
       when "global?"
-        interpret_check_args { BoolLiteral.new(@global) }
+        interpret_check_args { BoolLiteral.new(global?) }
       when "resolve"
         interpret_check_args { interpreter.resolve(self) }
       when "resolve?"

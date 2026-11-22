@@ -615,8 +615,9 @@ module Crystal
   class Generic
     property! instance_type : GenericType
     property scope : Type?
-    property? in_type_args = false
-    property? inside_is_a = false
+
+    property_flag in_type_args
+    property_flag inside_is_a
 
     def update(from = nil)
       instance_type = self.instance_type
@@ -741,7 +742,7 @@ module Crystal
         raise "generic type too nested: #{generic_type}"
       end
 
-      generic_type = generic_type.metaclass unless @in_type_args
+      generic_type = generic_type.metaclass unless in_type_args?
       self.type = generic_type
     end
   end
