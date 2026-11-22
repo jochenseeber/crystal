@@ -74,8 +74,6 @@ module Crystal
     @observers : SmallNodeList = SmallNodeList.new
     property enclosing_call : Call?
 
-    @dirty = false
-
     @type : Type?
 
     def type
@@ -213,7 +211,7 @@ module Crystal
       return unless new_type
 
       set_type_from(new_type, from)
-      @dirty = true
+      self.dirty = true
       propagate
     end
 
@@ -288,12 +286,12 @@ module Crystal
         set_type(nil)
       end
 
-      @dirty = true
+      self.dirty = true
     end
 
     def propagate
-      if @dirty
-        @dirty = false
+      if dirty?
+        self.dirty = false
         notify_observers
       end
     end

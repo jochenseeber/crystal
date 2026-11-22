@@ -35,6 +35,137 @@ end
 module Crystal
   # Base class for nodes in the grammar.
   abstract class ASTNode
+    # Small properties of nodes, packed into bit fields (see `property_flag`).
+    # It is declared first so that it fits into the padding after the type id
+    # instead of taking up 8 bytes between two pointers. It needs the
+    # explicit type: instance variables with an inferred type are laid out
+    # after all the ones declared with a type.
+    @flags : UInt16 = 0
+
+    # Defines a property that is stored in a range of bits of `@flags`
+    # instead of bytes of its own:
+    #
+    # * `property_flag name : Bool = true`: a `Bool`
+    # * `property_flag name : SomeEnum = SomeEnum::Value`: an enum, as wide as
+    #   its largest value needs
+    # * `property_flag name : UInt8 = 0, bits: 3`: an unsigned integer of
+    #   *bits* bits
+    #
+    # Type (default: `Bool`) and default value are optional.
+    #
+    # The value is stored XOR-ed with its default, so the zero bits of a new
+    # node mean the default. The range is the lowest one that this class, its
+    # ancestors and its subclasses don't use yet, recorded as the constant
+    # `FLAG_BITS_<NAME> = {offset, width}`. With *setter* `false` the setter
+    # is private.
+    private macro property_flag(decl, *, bits = nil, setter = true)
+      {% if decl.is_a?(TypeDeclaration) %}
+        {% name = decl.var.id %}
+        {% type = decl.type.resolve %}
+        {% default = decl.value %}
+        {% raise "Flag property #{@type}##{name} needs a default value" if default.is_a?(Nop) %}
+      {% else %}
+        {% name = decl.id %}
+        {% type = Bool %}
+        {% default = false %}
+      {% end %}
+
+      {% if type == Bool %}
+        {% width = 1 %}
+      {% elsif type < Enum %}
+        {% max = 0 %}
+        {% for constant in type.constants %}
+          {% value = type.constant(constant) %}
+          {% raise "Flag property #{@type}##{name}: #{type} has a negative value" if value < 0 %}
+          {% max = value if value > max %}
+        {% end %}
+        {% width = 1 %}
+        {% for i in 1..15 %}
+          {% width = i + 1 if max >= (1 << i) %}
+        {% end %}
+      {% elsif [UInt8, UInt16].includes?(type) %}
+        {% raise "Flag property #{@type}##{name} of type #{type} needs `bits:`" unless bits %}
+        {% width = bits %}
+      {% else %}
+        {% raise "Flag property #{@type}##{name} can't have type #{type}" %}
+      {% end %}
+
+      {% used = [] of NumberLiteral %}
+      {% for owner in [@type] + @type.ancestors.select { |a| a <= ::Crystal::ASTNode } + @type.all_subclasses %}
+        {% for constant in owner.constants.select(&.starts_with?("FLAG_BITS_")) %}
+          {% range = owner.constant(constant) %}
+          {% for i in 0...range[1] %}
+            {% used << range[0] + i %}
+          {% end %}
+        {% end %}
+      {% end %}
+      {% offset = nil %}
+      {% for candidate in 0..(16 - width) %}
+        {% if offset.nil? %}
+          {% free = true %}
+          {% for i in 0...width %}
+            {% free = false if used.includes?(candidate + i) %}
+          {% end %}
+          {% offset = candidate if free %}
+        {% end %}
+      {% end %}
+      {% raise "No #{width} free flag bits left in #{@type} for `#{name}`" if offset.nil? %}
+      {% mask = (1 << width) - 1 %}
+
+      # :nodoc:
+      FLAG_BITS_{{name.upcase}} = { {{offset}}, {{width}} }
+
+      {% if type == Bool %}
+        def {{name}}? : Bool
+          (@flags.bit({{offset}}) == 1) != {{default}}
+        end
+      {% else %}
+        def {{name}} : {{type}}
+          raw = (@flags >> {{offset}}) & {{mask}}
+          {% if type < Enum %}
+            {{type}}.new(typeof({{type}}.new(0).value).new!(raw ^ {{default}}.value))
+          {% else %}
+            {{type}}.new!(raw ^ {{default}})
+          {% end %}
+        end
+      {% end %}
+
+      {{"private ".id unless setter}}def {{name}}=(value : {{type}}) : {{type}}
+        {% if type == Bool %}
+          raw = value != {{default}} ? 1_u16 : 0_u16
+        {% elsif type < Enum %}
+          raw = (value.value ^ {{default}}.value).to_u16! & {{mask}}
+        {% else %}
+          ::raise ArgumentError.new("#{value} does not fit into {{width}} bits") if value > {{mask}}
+          raw = (value ^ {{default}}).to_u16!
+        {% end %}
+        @flags = (@flags & ~({{mask}}_u16 << {{offset}})) | (raw << {{offset}})
+        value
+      end
+    end
+
+    # Fails the build if two flag properties of a class and its ancestors
+    # share a bit, which `property_flag` should never allow.
+    macro finished
+      {% for type in @type.all_subclasses %}
+        {% used = {} of NumberLiteral => String %}
+        {% for owner in [type] + type.ancestors.select { |a| a <= ::Crystal::ASTNode } %}
+          {% for constant in owner.constants.select(&.starts_with?("FLAG_BITS_")) %}
+            {% range = owner.constant(constant) %}
+            {% name = "#{owner}::#{constant}" %}
+            {% for i in 0...range[1] %}
+              {% bit = range[0] + i %}
+              {% raise "Flag bit #{bit} of #{type} is used by both #{used[bit].id} and #{name.id}" if used[bit] %}
+              {% used[bit] = name %}
+            {% end %}
+          {% end %}
+        {% end %}
+      {% end %}
+    end
+
+    # Whether the type of this node changed and its observers must be notified
+    property_flag dirty, setter: false
+
     # Defines a property of type `Int32?` for a value that is never negative,
     # stored as an `Int32` with `-1` for `nil`. An `Int32?` instance variable
     # is a union that takes 16 bytes; the `Int32` takes 4.

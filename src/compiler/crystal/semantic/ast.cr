@@ -467,20 +467,20 @@ module Crystal
 
     # True if we need to mark this variable as nilable
     # if this variable is read.
-    property? nil_if_read = false
+    property_flag nil_if_read
 
     # A variable is closured if it's used in a ProcLiteral context
-    # where it wasn't created.
-    getter? closured = false
+    # where it wasn't created. Set with `mark_as_closured`.
+    property_flag closured, setter: false
 
     # Is this metavar assigned a value?
-    property? assigned_to = false
+    property_flag assigned_to
 
     # Is this metavar closured in a mutable way?
     # This means it's closured and it got a value assigned to it more than once.
     # If that's the case, when it's closured then all local variable related to
     # it will also be bound to it.
-    property? mutably_closured = false
+    property_flag mutably_closured
 
     # Local variables associated with this meta variable.
     # Can be Var or MetaVar.
@@ -491,7 +491,7 @@ module Crystal
 
     # Marks this variable as closured.
     def mark_as_closured
-      @closured = true
+      self.closured = true
 
       return unless mutably_closured?
 
