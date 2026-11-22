@@ -1493,7 +1493,7 @@ module Crystal
         end
       when "splat_index"
         interpret_check_args do
-          @splat_index ? NumberLiteral.new(@splat_index.not_nil!) : NilLiteral.new
+          (splat_index = self.splat_index) ? NumberLiteral.new(splat_index) : NilLiteral.new
         end
       else
         super
@@ -1665,14 +1665,14 @@ module Crystal
         interpret_check_args { ArrayLiteral.map @args, &.itself }
       when "splat_index"
         interpret_check_args do
-          @splat_index ? NumberLiteral.new(@splat_index.not_nil!) : NilLiteral.new
+          (splat_index = self.splat_index) ? NumberLiteral.new(splat_index) : NilLiteral.new
         end
       when "double_splat"
         interpret_check_args { @double_splat || Nop.new }
       when "block_arg"
         interpret_check_args { @block_arg || Nop.new }
       when "accepts_block?"
-        interpret_check_args { BoolLiteral.new(@block_arity != nil) }
+        interpret_check_args { BoolLiteral.new(!block_arity.nil?) }
       when "return_type"
         interpret_check_args { @return_type || Nop.new }
       when "free_vars"
@@ -1729,7 +1729,7 @@ module Crystal
         interpret_check_args { ArrayLiteral.map @args, &.itself }
       when "splat_index"
         interpret_check_args do
-          @splat_index ? NumberLiteral.new(@splat_index.not_nil!) : NilLiteral.new
+          (splat_index = self.splat_index) ? NumberLiteral.new(splat_index) : NilLiteral.new
         end
       when "double_splat"
         interpret_check_args { @double_splat || Nop.new }
@@ -2931,7 +2931,7 @@ module Crystal
         end
       when "splat_index"
         interpret_check_args do
-          if splat_index = @splat_index
+          if splat_index = self.splat_index
             NumberLiteral.new(splat_index)
           else
             NilLiteral.new
@@ -2966,7 +2966,7 @@ module Crystal
         end
       when "splat_index"
         interpret_check_args do
-          if splat_index = @splat_index
+          if splat_index = self.splat_index
             NumberLiteral.new(splat_index)
           else
             NilLiteral.new

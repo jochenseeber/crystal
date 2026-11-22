@@ -144,32 +144,12 @@ module Crystal
     property next : Def?
     property special_vars : Set(String)?
     property freeze_type : Type?
-    property block_nest = 0
-    property? raises = false
-    property? closure = false
-    property? self_closured = false
-    property? captured_block = false
-
-    # `true` if this def has the `@[NoInline]` annotation
-    property? no_inline = false
-
-    # `true` if this def has the `@[AlwaysInline]` annotation
-    property? always_inline = false
-
-    # `true` if this def has the `@[ReturnsTwice]` annotation
-    property? returns_twice = false
 
     # Set to the value of the `@[TargetFeature("+sve,+sve2")]` annotation
     property target_features : String? = nil
 
     # Set to the value of the `@[TargetFeature(cpu: "apple-m4")]` annotation
     property target_cpu : String? = nil
-
-    # `true` if this def has the `@[Naked]` annotation
-    property? naked = false
-
-    # Is this a `new` method that was expanded from an initialize?
-    property? new = false
 
     # Name of the original def if this def has been expanded (default arguments)
     property? original_name : String?
@@ -178,6 +158,31 @@ module Crystal
 
     # Used to override the meaning of `self` in restrictions
     property self_restriction_type : Type?
+
+    # The fields below are smaller than a pointer and declared last, together
+    # with the ones from `codegen/ast.cr`, so that they pack without padding
+    # (see `syntax/ast.cr`).
+
+    property block_nest : Int32 = 0
+    property? raises : Bool = false
+    property? closure : Bool = false
+    property? self_closured : Bool = false
+    property? captured_block : Bool = false
+
+    # `true` if this def has the `@[NoInline]` annotation
+    property? no_inline : Bool = false
+
+    # `true` if this def has the `@[AlwaysInline]` annotation
+    property? always_inline : Bool = false
+
+    # `true` if this def has the `@[ReturnsTwice]` annotation
+    property? returns_twice : Bool = false
+
+    # `true` if this def has the `@[Naked]` annotation
+    property? naked : Bool = false
+
+    # Is this a `new` method that was expanded from an initialize?
+    property? new : Bool = false
 
     def macro_owner=(@macro_owner)
     end
@@ -729,17 +734,34 @@ module Crystal
     property? external_var : Bool = false
     property real_name : String
     property! fun_def : FunDef
-    property call_convention : LLVM::CallConvention?
     property wasm_import_module : String?
 
-    property? dead = false
-    property? used = false
-    property? varargs = false
+    # The fields below are smaller than a pointer and declared last, so that
+    # they pack without padding.
+
+    # Stored as a plain enum value with an invalid value for `nil`, instead
+    # of a 16-byte `LLVM::CallConvention?` union.
+    NO_CALL_CONVENTION = LLVM::CallConvention.new(-1)
+
+    @call_convention : LLVM::CallConvention = NO_CALL_CONVENTION
+
+    def call_convention : LLVM::CallConvention?
+      @call_convention unless @call_convention == NO_CALL_CONVENTION
+    end
+
+    def call_convention=(value : LLVM::CallConvention?) : LLVM::CallConvention?
+      @call_convention = value || NO_CALL_CONVENTION
+      value
+    end
+
+    property? dead : Bool = false
+    property? used : Bool = false
+    property? varargs : Bool = false
 
     # An External is also used to represent external variables
     # such as libc's `$errno`, which can be annotated with
     # `@[ThreadLocal]`. This property is `true` in that case.
-    property? thread_local = false
+    property? thread_local : Bool = false
 
     def initialize(name : String, args : Array(Arg), body, @real_name : String)
       super(name, args, body, nil, nil, nil)

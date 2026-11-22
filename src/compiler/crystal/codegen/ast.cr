@@ -8,7 +8,9 @@ module Crystal
   end
 
   class Def
-    property? abi_info = false
+    # Smaller than a pointer, like the fields after it: they pack with the
+    # ones at the end of `Def` in `semantic/ast.cr`.
+    property? abi_info : Bool = false
 
     def mangled_name(program, self_type)
       name = String.build do |str|
@@ -72,17 +74,45 @@ module Crystal
       nil
     end
 
-    @c_calling_convention : Bool? = nil
-    property c_calling_convention
+    # :nodoc:
+    # Whether this def must respect the C calling convention, stored in a
+    # single byte instead of a 16-byte `Bool?` union.
+    enum CCallingConvention : UInt8
+      Unknown
+      No
+      Yes
+    end
+
+    @c_calling_convention : CCallingConvention = CCallingConvention::Unknown
+
+    # Whether this def must respect the C calling convention, or `nil` if
+    # that is not known yet.
+    def c_calling_convention : Bool?
+      case @c_calling_convention
+      in .unknown? then nil
+      in .no?      then false
+      in .yes?     then true
+      end
+    end
+
+    def c_calling_convention=(value : Bool?) : Bool?
+      @c_calling_convention =
+        case value
+        in Nil   then CCallingConvention::Unknown
+        in false then CCallingConvention::No
+        in true  then CCallingConvention::Yes
+        end
+      value
+    end
 
     # Returns `self` as an `External` if this Def is an External
     # that must respect the C calling convention.
     def c_calling_convention?
-      if @c_calling_convention.nil?
-        @c_calling_convention = compute_c_calling_convention
+      if @c_calling_convention.unknown?
+        self.c_calling_convention = compute_c_calling_convention
       end
 
-      @c_calling_convention ? self : nil
+      @c_calling_convention.yes? ? self : nil
     end
 
     def llvm_intrinsic?
