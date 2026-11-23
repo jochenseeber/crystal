@@ -2147,7 +2147,7 @@ module Crystal
     end
 
     def conditional_no_return(node, var)
-      node.filtered_by NoReturnFilter.new(var)
+      NoReturnFilteredNode.new(var, node)
     end
 
     def visit(node : While)

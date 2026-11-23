@@ -57,7 +57,7 @@ module Crystal
       false
     end
 
-    def visit(node : TypeFilteredNode)
+    def visit(node : TypeFilteredNode | NoReturnFilteredNode)
       false
     end
 
