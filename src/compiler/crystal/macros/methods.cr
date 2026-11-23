@@ -1668,7 +1668,7 @@ module Crystal
           (splat_index = self.splat_index) ? NumberLiteral.new(splat_index) : NilLiteral.new
         end
       when "double_splat"
-        interpret_check_args { @double_splat || Nop.new }
+        interpret_check_args { double_splat || Nop.new }
       when "block_arg"
         interpret_check_args { @block_arg || Nop.new }
       when "accepts_block?"
@@ -1677,7 +1677,7 @@ module Crystal
         interpret_check_args { @return_type || Nop.new }
       when "free_vars"
         interpret_check_args do
-          if (free_vars = @free_vars) && !free_vars.empty?
+          if (free_vars = self.free_vars) && !free_vars.empty?
             ArrayLiteral.map(free_vars) { |free_var| MacroId.new(free_var) }
           else
             empty_no_return_array
@@ -1686,7 +1686,7 @@ module Crystal
       when "body"
         interpret_check_args { @body }
       when "receiver"
-        interpret_check_args { @receiver || Nop.new }
+        interpret_check_args { receiver || Nop.new }
       when "visibility"
         interpret_check_args do
           visibility_to_symbol(visibility)

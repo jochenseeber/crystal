@@ -122,6 +122,14 @@ module Crystal
     #   end
     # end
     # ```
-    include HookExpansionsContainer
+    #
+    # Unlike the other containers, `Def` keeps them in its extension object:
+    # few defs have any.
+    extension_property hook_expansions : Array(ASTNode)?, setter: false
+
+    def add_hook_expansion(node)
+      expansions = hook_expansions || (self.hook_expansions = [] of ASTNode)
+      expansions << node
+    end
   end
 end

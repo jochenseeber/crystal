@@ -140,24 +140,25 @@ module Crystal
     property! original_owner : Type
     property vars : MetaVars?
     property yield_vars : Array(Var)?
-    # The definition this one overrides, see `ModuleType#add_def`.
-    property previous_definition : Def?
-    property next : Def?
     property freeze_type : Type?
 
+    # The definition this one overrides, see `ModuleType#add_def`.
+    extension_property previous_definition : Def?
+    extension_property next : Def?
+
     # Set to the value of the `@[TargetFeature("+sve,+sve2")]` annotation
-    property target_features : String? = nil
+    extension_property target_features : String?
 
     # Set to the value of the `@[TargetFeature(cpu: "apple-m4")]` annotation
-    property target_cpu : String? = nil
+    extension_property target_cpu : String?
 
     # Name of the original def if this def has been expanded (default arguments)
-    property? original_name : String?
+    extension_property original_name : String?, getter: original_name?
 
-    @macro_owner : Type?
+    extension_property macro_owner : Type?, getter: macro_owner?
 
     # Used to override the meaning of `self` in restrictions
-    property self_restriction_type : Type?
+    extension_property self_restriction_type : Type?
 
     # The fields below are smaller than a pointer and declared last, together
     # with the ones from `codegen/ast.cr`, so that they pack without padding
@@ -185,19 +186,12 @@ module Crystal
     # Is this a `new` method that was expanded from an initialize?
     property? new : Bool = false
 
-    def macro_owner=(@macro_owner)
-    end
-
     def macro_owner
-      @macro_owner || @owner
-    end
-
-    def macro_owner?
-      @macro_owner
+      macro_owner? || @owner
     end
 
     def original_name
-      @original_name || @name
+      original_name? || @name
     end
 
     # The special variables this def assigns, and which callers must pass to
@@ -290,7 +284,7 @@ module Crystal
     end
 
     def free_var?(node : Path)
-      free_vars = @free_vars
+      free_vars = self.free_vars
       return false unless free_vars
       name = node.single_name?
       !name.nil? && free_vars.includes?(name)
