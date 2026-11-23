@@ -6,12 +6,12 @@ class Crystal::Call
   include HierarchyObserver
 
   property! scope : Type
-  property with_scope : Type?
   property! parent_visitor : MainVisitor
   property target_defs : Array(Def)?
-  property expanded : ASTNode?
-  property expanded_macro : Macro?
-  property? uses_with_scope = false
+  property_flag uses_with_scope
+  extension_property with_scope : Type?
+  extension_property expanded : ASTNode?
+  extension_property expanded_macro : Macro?
 
   # The with scope acts as the receiver of a call that uses it, so dispatch
   # has to be decided on its type rather than on the enclosing scope.
@@ -93,7 +93,7 @@ class Crystal::Call
 
     @target_defs = nil
 
-    if block_arg = @block_arg
+    if block_arg = self.block_arg
       replace_block_arg_with_block(block_arg)
     end
 
@@ -207,7 +207,7 @@ class Crystal::Call
       lookup_super_matches(arg_types, named_args_types, with_autocast: with_autocast)
     elsif name == "previous_def"
       lookup_previous_def_matches(arg_types, named_args_types, with_autocast: with_autocast)
-    elsif with_scope = @with_scope
+    elsif with_scope = self.with_scope
       lookup_matches_with_scope_in with_scope, arg_types, named_args_types, with_autocast: with_autocast
     else
       lookup_matches_in scope, arg_types, named_args_types, with_autocast: with_autocast
@@ -269,7 +269,7 @@ class Crystal::Call
       without_match = types.reject &.lookup_matches(signature, analyze_all: with_autocast).cover_all?
 
       if without_match.empty?
-        @uses_with_scope = true
+        self.uses_with_scope = true
         return lookup_matches_in owner, arg_types, named_args_types, with_autocast: with_autocast
       elsif without_match.size < types.size
         raise "undefined method '#{name}' for #{without_match.join(", ")} (with ... yield), every type in #{owner} must define it"
@@ -277,11 +277,11 @@ class Crystal::Call
     end
 
     if matches.empty?
-      @uses_with_scope = false
+      self.uses_with_scope = false
       return lookup_matches_in scope, arg_types, named_args_types, with_autocast: with_autocast
     end
 
-    @uses_with_scope = true
+    self.uses_with_scope = true
 
     # A module can't hold def instances, and can't be a receiver at runtime, so
     # the matches found above only establish that the scope responds to this
@@ -315,10 +315,10 @@ class Crystal::Call
       defined_method_missing = owner.check_method_missing(signature, self)
       if defined_method_missing
         matches = owner.lookup_matches(signature, analyze_all: with_autocast)
-      elsif with_scope = @with_scope
+      elsif with_scope = self.with_scope
         defined_method_missing = with_scope.check_method_missing(signature, self)
         if defined_method_missing
-          @uses_with_scope = true
+          self.uses_with_scope = true
 
           # `check_method_missing` defined the method on the module, which can't
           # hold its def instances, so resolve the call against the types
@@ -823,7 +823,7 @@ class Crystal::Call
   end
 
   def in_macro_target(&)
-    if with_scope = @with_scope
+    if with_scope = self.with_scope
       macros = yield with_scope
       return macros if macros
     end
@@ -1198,8 +1198,8 @@ class Crystal::Call
 
   def obj_and_args_types_set?
     obj = @obj
-    block_arg = @block_arg
-    named_args = @named_args
+    block_arg = self.block_arg
+    named_args = self.named_args
 
     return false unless args.all? &.type?
     return false if obj && !obj.type?

@@ -659,7 +659,7 @@ module Crystal
   class Call
     include Annotatable
 
-    property before_vars : MetaVars?
+    extension_property before_vars : MetaVars?
 
     # Annotations that the macro this call expands to removed through
     # `Call#delete_annotation` or `Call#delete_annotations`. The macro is
