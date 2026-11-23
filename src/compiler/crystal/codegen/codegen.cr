@@ -169,6 +169,8 @@ module Crystal
 
     def codegen(node, single_module = false, debug = Debug::Default,
                 frame_pointers = FramePointers::Auto)
+      release_bindings node
+
       visitor = CodeGenVisitor.new self, node, single_module: single_module,
         debug: debug, frame_pointers: frame_pointers
       visitor.accept node
@@ -798,7 +800,7 @@ module Crystal
                 instance_var_ptr (node_exp.obj.type), node_exp.name, @last
               when Call
                 # lib external var
-                extern = node_exp.dependencies.first.as(External)
+                extern = node_exp.target_def.as(External)
                 var = get_external_var(extern)
                 check_c_fun extern.type, var
               else
@@ -2320,7 +2322,7 @@ module Crystal
     end
 
     def bound_to_mod_nil?(var)
-      var.dependencies.any? &.same?(@program.nil_var)
+      var.bound_to_nil_var? || var.dependencies.any? &.same?(@program.nil_var)
     end
 
     def alloca(type, name = "")

@@ -143,6 +143,10 @@ module Crystal
     # Whether to show error trace
     property? show_error_trace = false
 
+    # If `true`, `#release_bindings` removes the links between nodes that only
+    # the type inference uses (`ASTBase#release_links`).
+    property? release_bindings = false
+
     # The main filename of this program
     property filename : String?
 

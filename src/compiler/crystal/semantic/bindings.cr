@@ -331,6 +331,24 @@ module Crystal
       {% end %}
     end
 
+    # :nodoc:
+    #
+    # Removes the dependencies, the observers and the enclosing call of this
+    # node, and returns whether it had any. Only for a program whose type
+    # inference is finished (see `Program#release_bindings`): nothing
+    # propagates types any more, so the links only keep nodes alive.
+    def release_links : Bool
+      {% begin %}
+        linked = {% for index in 0...LINK_SLOTS %} !@link{{index}}.nil? || {% end %} false
+        {% for index in 0...LINK_SLOTS %}
+          @link{{index}} = nil
+        {% end %}
+        self.link_kinds = 0_u8
+        self.enclosing_call_link = false
+        linked
+      {% end %}
+    end
+
     @type : Type?
 
     def type

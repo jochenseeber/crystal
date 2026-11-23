@@ -261,6 +261,8 @@ end
 private def new_program(flags = nil)
   program = Program.new
   program.color = false
+  # As in the `crystal` command, so that codegen specs cover this pass
+  program.release_bindings = true
   if flags
     program.user_flags.concat(flags)
     program.flags.concat(flags)
@@ -315,6 +317,8 @@ end
 
 def create_spec_compiler
   compiler = Compiler.new
+  # As in the `crystal` command, so that codegen specs cover this pass
+  compiler.release_bindings = true
   if (n_threads = spec_compiler_threads)
     compiler.n_threads = n_threads
   end
