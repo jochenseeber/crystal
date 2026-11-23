@@ -1,5 +1,5 @@
 module Crystal
-  class TypeFilteredNode < ASTNode
+  class TypeFilteredNode < ASTBase
     def initialize(@filter : TypeFilter, @node : ASTNode)
       dependencies.push @node
       node.add_observer self
@@ -12,10 +12,6 @@ module Crystal
       if from_type
         self.type = @filter.apply(from_type)
       end
-    end
-
-    def clone_without_location
-      TypeFilteredNode.new(@filter, @node)
     end
 
     def to_s(io : IO) : Nil
@@ -261,7 +257,7 @@ module Crystal
   # It is a node of its own instead of a `TypeFilteredNode` with a filter that
   # holds the var: there is one for each variable of such an `if`, and the
   # filter would be one more object for each of them.
-  class NoReturnFilteredNode < ASTNode
+  class NoReturnFilteredNode < ASTBase
     def initialize(@var : ASTNode, @node : ASTNode)
       dependencies.push @node
       node.add_observer self
@@ -274,10 +270,6 @@ module Crystal
       if from_type
         self.type = from_type.no_return? ? from_type : @var.type?
       end
-    end
-
-    def clone_without_location
-      NoReturnFilteredNode.new(@var, @node)
     end
   end
 

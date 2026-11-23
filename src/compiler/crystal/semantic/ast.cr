@@ -1,6 +1,13 @@
 require "../syntax/ast"
 
 module Crystal
+  class ASTBase
+    # Raises a type error without a location; `ASTNode` adds its own.
+    def raise(message, inner = nil, exception_type = Crystal::TypeException)
+      ::raise exception_type.new(message, nil, 0, nil, 0, inner)
+    end
+  end
+
   class ASTNode
     def raise(message, inner = nil, exception_type = Crystal::TypeException)
       ::raise exception_type.for_node(self, message, inner)
