@@ -141,7 +141,6 @@ module Crystal
     property vars : MetaVars?
     property previous : DefWithMetadata?
     property next : Def?
-    property special_vars : Set(String)?
     property freeze_type : Type?
 
     # Set to the value of the `@[TargetFeature("+sve,+sve2")]` annotation
@@ -199,9 +198,36 @@ module Crystal
       @original_name || @name
     end
 
-    def add_special_var(name)
-      special_vars = @special_vars ||= Set(String).new
-      special_vars << name
+    # The special variables this def assigns, and which callers must pass to
+    # it by reference. Only `$~` and `$?` can be assigned, so they are two bits
+    # of `@flags` instead of a `Set` (see `#special_vars`).
+    property_flag assigns_dollar_tilde, setter: false
+    property_flag assigns_dollar_question, setter: false
+
+    # Returns the special variables this def assigns, `$~` before `$?`, or
+    # `nil` if it assigns none. Codegen relies on the fixed order: callers
+    # pass the variables as hidden arguments in this order.
+    def special_vars : Array(String)?
+      return unless assigns_dollar_tilde? || assigns_dollar_question?
+
+      special_vars = [] of String
+      special_vars << "$~" if assigns_dollar_tilde?
+      special_vars << "$?" if assigns_dollar_question?
+      special_vars
+    end
+
+    def special_vars=(names : Enumerable(String)?)
+      self.assigns_dollar_tilde = false
+      self.assigns_dollar_question = false
+      names.try &.each { |name| add_special_var(name) }
+    end
+
+    def add_special_var(name : String) : Nil
+      case name
+      when "$~" then self.assigns_dollar_tilde = true
+      when "$?" then self.assigns_dollar_question = true
+      else           ::raise "BUG: unknown special variable #{name}"
+      end
     end
 
     # Returns the minimum and maximum number of positional arguments that must
