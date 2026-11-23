@@ -2,7 +2,7 @@ require "../syntax/transformer"
 
 module Crystal
   class Transformer
-    def transform(node : MetaVar | MetaMacroVar | Primitive | TypeFilteredNode | NoReturnFilteredNode | TupleIndexer | TypeNode | AssignWithRestriction | YieldBlockBinder | MacroId | Unreachable)
+    def transform(node : MetaVar | MetaMacroVar | Primitive | TupleIndexer | TypeNode | AssignWithRestriction | MacroId | Unreachable)
       node
     end
 

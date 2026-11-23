@@ -1,16 +1,16 @@
 module Crystal
-  # A view of one kind of link of an `ASTNode`, kept in the node's link slots
-  # (see `ASTNode#each_link`).
+  # A view of one kind of link of an `ASTBase`, kept in the node's link slots
+  # (see `ASTBase#each_link`).
   abstract struct NodeLinks
-    include Enumerable(ASTNode)
+    include Enumerable(ASTBase)
 
-    def initialize(@node : ASTNode)
+    def initialize(@node : ASTBase)
     end
 
     # Whether this view holds observers instead of dependencies.
     private abstract def observers? : Bool
 
-    def each(& : ASTNode ->)
+    def each(& : ASTBase ->)
       @node.each_link(observers?) { |node| yield node }
     end
 
@@ -18,42 +18,42 @@ module Crystal
       @node.link_count(observers?)
     end
 
-    def push(node : ASTNode) : self
+    def push(node : ASTBase) : self
       @node.push_link(node, observers?)
       self
     end
 
-    def concat(nodes : Enumerable(ASTNode)) : self
+    def concat(nodes : Enumerable(ASTBase)) : self
       nodes.each { |node| push(node) }
       self
     end
 
-    def reject!(& : ASTNode ->) : self
+    def reject!(& : ASTBase ->) : self
       @node.reject_links!(observers?) { |node| yield node }
       self
     end
 
     # Removes and returns the last node, or returns `nil` if there is none.
-    def pop? : ASTNode?
+    def pop? : ASTBase?
       @node.pop_link?(observers?)
     end
   end
 
-  # The nodes an `ASTNode` takes its type from.
+  # The nodes an `ASTBase` takes its type from.
   struct DependencyLinks < NodeLinks
     private def observers? : Bool
       false
     end
   end
 
-  # The nodes that take their type from an `ASTNode`.
+  # The nodes that take their type from an `ASTBase`.
   struct ObserverLinks < NodeLinks
     private def observers? : Bool
       true
     end
   end
 
-  class ASTNode
+  class ASTBase
     # The number of link slots of every node, at least 3.
     LINK_SLOTS = 3
 
@@ -75,7 +75,7 @@ module Crystal
     # bytes, and most nodes need no array: compiling the compiler, 94% of
     # nodes have at most three dependencies and observers together.
     {% for index in 0...LINK_SLOTS %}
-      @link{{index}} : ASTNode | Array(ASTNode) | Nil
+      @link{{index}} : ASTBase | Array(ASTBase) | Nil
     {% end %}
 
     property_flag link_kinds : UInt8 = 0, bits: {{LINK_SLOTS}}, setter: false
@@ -94,7 +94,7 @@ module Crystal
     # Yields the nodes of the slots as they are when the method is called.
     # The block can add and remove links of this node, which moves nodes
     # between slots, so reading the slots one at a time could miss a node.
-    def each_link(observers : Bool, & : ASTNode ->) : Nil
+    def each_link(observers : Bool, & : ASTBase ->) : Nil
       {% begin %}
         links = { {% for index in 0...LINK_SLOTS %} @link{{index}}, {% end %} }
         kinds = link_kinds
@@ -103,9 +103,9 @@ module Crystal
           next unless (kinds.bit(index) == 1) == observers
 
           case link = links[index]
-          in ASTNode
+          in ASTBase
             yield link
-          in Array(ASTNode)
+          in Array(ASTBase)
             link.each { |node| yield node }
           in Nil
           end
@@ -120,8 +120,8 @@ module Crystal
         next unless observer_link?(index) == observers
 
         case link = link(index)
-        in ASTNode        then count += 1
-        in Array(ASTNode) then count += link.size
+        in ASTBase        then count += 1
+        in Array(ASTBase) then count += link.size
         in Nil
         end
       end
@@ -129,9 +129,9 @@ module Crystal
     end
 
     # :nodoc:
-    def push_link(node : ASTNode, observers : Bool) : Nil
+    def push_link(node : ASTBase, observers : Bool) : Nil
       last = last_link_index(observers)
-      if last && (array = link(last)).is_a?(Array(ASTNode))
+      if last && (array = link(last)).is_a?(Array(ASTBase))
         array << node
         return
       end
@@ -148,21 +148,21 @@ module Crystal
       if used < slots
         set_link(used, node, observers)
       elsif last
-        set_link(last, [link(last).as(ASTNode), node] of ASTNode, observers)
+        set_link(last, [link(last).as(ASTBase), node] of ASTBase, observers)
       else
         # All slots hold the other kind: merge its last two slots to make
         # room. Only its last slot can be an array, so the one before it
         # holds a single node.
-        set_link(slots - 2, merge_links(link(slots - 2).as(ASTNode), link(slots - 1)), !observers)
+        set_link(slots - 2, merge_links(link(slots - 2).as(ASTBase), link(slots - 1)), !observers)
         set_link(slots - 1, node, observers)
       end
     end
 
     # :nodoc:
-    def pop_link?(observers : Bool) : ASTNode?
+    def pop_link?(observers : Bool) : ASTBase?
       return unless last = last_link_index(observers)
 
-      if (array = link(last)).is_a?(Array(ASTNode))
+      if (array = link(last)).is_a?(Array(ASTBase))
         return array.pop unless array.empty?
 
         # The empty array keeps its slot, so the last node is in a slot
@@ -170,25 +170,25 @@ module Crystal
         return unless last = last_link_index(observers, before: last)
       end
 
-      node = link(last).as(ASTNode)
+      node = link(last).as(ASTBase)
       set_link(last, nil, observers)
       compact_links
       node
     end
 
     # :nodoc:
-    def reject_links!(observers : Bool, & : ASTNode ->) : Nil
+    def reject_links!(observers : Bool, & : ASTBase ->) : Nil
       emptied = false
       link_slots.times do |index|
         next unless observer_link?(index) == observers
 
         case link = link(index)
-        in ASTNode
+        in ASTBase
           if yield link
             set_link(index, nil, observers)
             emptied = true
           end
-        in Array(ASTNode)
+        in Array(ASTBase)
           link.reject! { |node| yield node }
         in Nil
         end
@@ -196,7 +196,7 @@ module Crystal
       compact_links if emptied
     end
 
-    private def link(index : Int32) : ASTNode | Array(ASTNode) | Nil
+    private def link(index : Int32) : ASTBase | Array(ASTBase) | Nil
       {% begin %}
         case index
         {% for index in 0...LINK_SLOTS - 1 %}
@@ -207,7 +207,7 @@ module Crystal
       {% end %}
     end
 
-    private def set_link(index : Int32, link : ASTNode | Array(ASTNode) | Nil, observers : Bool) : Nil
+    private def set_link(index : Int32, link : ASTBase | Array(ASTBase) | Nil, observers : Bool) : Nil
       {% begin %}
         case index
         {% for index in 0...LINK_SLOTS - 1 %}
@@ -246,7 +246,7 @@ module Crystal
     private def empty_link_index : Int32?
       link_slots.times do |index|
         link = link(index)
-        return index if link.is_a?(Array(ASTNode)) && link.empty?
+        return index if link.is_a?(Array(ASTBase)) && link.empty?
       end
       nil
     end
@@ -273,10 +273,10 @@ module Crystal
     end
 
     # Returns an array of a node and the nodes of the slot after it.
-    private def merge_links(first : ASTNode, link : ASTNode | Array(ASTNode) | Nil) : Array(ASTNode)
+    private def merge_links(first : ASTBase, link : ASTBase | Array(ASTBase) | Nil) : Array(ASTBase)
       case link
-      in ASTNode        then [first, link] of ASTNode
-      in Array(ASTNode) then link.unshift(first)
+      in ASTBase        then [first, link] of ASTBase
+      in Array(ASTBase) then link.unshift(first)
       in Nil            then ::raise "BUG: expected a used link slot"
       end
     end
@@ -300,11 +300,11 @@ module Crystal
       if previous = last_link_index(observers, before: last)
         # Only the last slot of a kind can be an array, so the one before it
         # holds a single node.
-        set_link(previous, merge_links(link(previous).as(ASTNode), link), observers)
+        set_link(previous, merge_links(link(previous).as(ASTBase), link), observers)
       else
         # The slots before it all hold the other kind: merge the last two of
         # them.
-        set_link(last - 2, merge_links(link(last - 2).as(ASTNode), link(last - 1)), !observers)
+        set_link(last - 2, merge_links(link(last - 2).as(ASTBase), link(last - 1)), !observers)
         set_link(last - 1, link, observers)
       end
       set_link(last, nil, false)
@@ -334,7 +334,7 @@ module Crystal
     @type : Type?
 
     def type
-      type? || ::raise "BUG: `#{self}` at #{self.location} has no type"
+      type? || ::raise "BUG: `#{self}` at #{self.as?(ASTNode).try &.location} has no type"
     end
 
     def type?
@@ -388,7 +388,7 @@ module Crystal
         ex.inner = trace
       end
 
-      if from && !location
+      if from && !self.as?(ASTNode).try(&.location)
         from.raise ex.message, ex.inner
       else
         ::raise ex
@@ -431,7 +431,7 @@ module Crystal
       @type
     end
 
-    def bind_to(node : ASTNode) : Nil
+    def bind_to(node : ASTBase) : Nil
       bind(node) do
         dependencies.push node
         node.add_observer self
@@ -480,12 +480,12 @@ module Crystal
       # Nothing to do
     end
 
-    def unbind_from(node : ASTNode)
+    def unbind_from(node : ASTBase)
       dependencies.reject! &.same?(node)
       node.remove_observer self
     end
 
-    def unbind_from(nodes : Enumerable(ASTNode))
+    def unbind_from(nodes : Enumerable(ASTBase))
       dependencies.reject! { |dep| nodes.any? &.same?(dep) }
       nodes.each &.remove_observer self
     end
@@ -593,15 +593,17 @@ module Crystal
     end
 
     def find_owner_trace(program, owner)
+      # The trace is printed with the nodes' locations, so it leaves out the
+      # nodes that have none.
       owner_trace = [] of ASTNode
       node = self
 
-      visited = Set(ASTNode).new.compare_by_identity
-      owner_trace << node if node.type?.try &.includes_type?(owner)
+      visited = Set(ASTBase).new.compare_by_identity
+      owner_trace << node if node.is_a?(ASTNode) && node.type?.try &.includes_type?(owner)
       visited.add node
       while node = node.dependencies.find { |dep| dep.type? && dep.type.includes_type?(owner) && !visited.includes?(dep) }
         nil_reason = node.nil_reason if node.is_a?(MetaTypeVar)
-        owner_trace << node if node
+        owner_trace << node if node.is_a?(ASTNode)
         visited.add node
       end
 
@@ -1126,7 +1128,7 @@ module Crystal
   end
 
   # Fictitious node to bind yield expressions to block arguments
-  class YieldBlockBinder < ASTNode
+  class YieldBlockBinder < ASTBase
     getter block
 
     def initialize(@program : Program, @block : Block)
@@ -1231,10 +1233,6 @@ module Crystal
         types = block_arg_types[i] ||= [] of Type
         types << exp_type
       end
-    end
-
-    def clone_without_location
-      self
     end
   end
 end

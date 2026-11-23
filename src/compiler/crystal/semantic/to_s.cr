@@ -57,10 +57,6 @@ module Crystal
       false
     end
 
-    def visit(node : TypeFilteredNode | NoReturnFilteredNode)
-      false
-    end
-
     def visit(node : TypeNode)
       node.type.devirtualize.to_s(@str)
       false
@@ -73,10 +69,6 @@ module Crystal
       node.restriction.accept self
       @str << " = "
       node.assign.value.accept self
-      false
-    end
-
-    def visit(node : YieldBlockBinder)
       false
     end
 

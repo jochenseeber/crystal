@@ -43,8 +43,12 @@ module Crystal
     Private
   end
 
-  # Base class for nodes in the grammar.
-  abstract class ASTNode
+  # Base class of `ASTNode`. It has what every node of the type inference
+  # needs (see `semantic/bindings.cr`), and nothing that belongs to a place
+  # in the source code. The semantic phase has nodes of its own that inherit
+  # from it directly, such as `TypeFilteredNode`: they stand for no part of
+  # the source code, so they have no location, and there are many of them.
+  abstract class ASTBase
     # Small properties of nodes, packed into bit fields (see `property_flag`).
     # It is declared first so that it fills the 4 bytes of padding after the
     # type id instead of taking up 8 bytes between two pointers. It needs the
@@ -107,7 +111,7 @@ module Crystal
       {% raise "Flag property #{@type}##{name} needs #{width} bits, at most 31 are allowed" if width > 31 %}
 
       {% used = [] of NumberLiteral %}
-      {% for owner in [@type] + @type.ancestors.select { |a| a <= ::Crystal::ASTNode } + @type.all_subclasses %}
+      {% for owner in [@type] + @type.ancestors.select { |a| a <= ::Crystal::ASTBase } + @type.all_subclasses %}
         {% for constant in owner.constants.select(&.starts_with?("FLAG_BITS_")) %}
           {% range = owner.constant(constant) %}
           {% for i in 0...range[1] %}
@@ -165,7 +169,7 @@ module Crystal
     macro finished
       {% for type in @type.all_subclasses %}
         {% used = {} of NumberLiteral => String %}
-        {% for owner in [type] + type.ancestors.select { |a| a <= ::Crystal::ASTNode } %}
+        {% for owner in [type] + type.ancestors.select { |a| a <= ::Crystal::ASTBase } %}
           {% for constant in owner.constants.select(&.starts_with?("FLAG_BITS_")) %}
             {% range = owner.constant(constant) %}
             {% name = "#{owner}::#{constant}" %}
@@ -181,7 +185,10 @@ module Crystal
 
     # Whether the type of this node changed and its observers must be notified
     property_flag dirty, setter: false
+  end
 
+  # Base class for nodes in the grammar.
+  abstract class ASTNode < ASTBase
     # Defines a property of type `Int32?` for a value that is never negative,
     # stored as an `Int32` with `-1` for `nil`. An `Int32?` instance variable
     # is a union that takes 16 bytes; the `Int32` takes 4.

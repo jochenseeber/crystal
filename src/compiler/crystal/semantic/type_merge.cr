@@ -17,7 +17,7 @@ module Crystal
       end
     end
 
-    def type_merge(nodes : Enumerable(ASTNode)) : Type?
+    def type_merge(nodes : Enumerable(ASTNode) | Enumerable(ASTBase)) : Type?
       case nodes.size
       when 0
         nil
@@ -163,7 +163,7 @@ module Crystal
   end
 
   class Type
-    def self.merge(nodes : Enumerable(ASTNode)) : Type?
+    def self.merge(nodes : Enumerable(ASTNode) | Enumerable(ASTBase)) : Type?
       nodes.find(&.type?).try &.type.program.type_merge(nodes)
     end
 

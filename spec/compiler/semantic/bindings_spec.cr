@@ -1,6 +1,6 @@
 require "../../spec_helper"
 
-private SLOTS = Crystal::ASTNode::LINK_SLOTS
+private SLOTS = Crystal::ASTBase::LINK_SLOTS
 
 private class UpdateCounter < Crystal::Nop
   getter updates = 0
@@ -28,15 +28,15 @@ private class UpdateHook < Crystal::Nop
 end
 
 # Returns the link slots of a node.
-private def link_slots(node : ASTNode) : Array(ASTNode | Array(ASTNode) | Nil)
+private def link_slots(node : ASTBase) : Array(ASTBase | Array(ASTBase) | Nil)
   {% begin %}
-    [{% for index in 0...Crystal::ASTNode::LINK_SLOTS %} node.@link{{index}}, {% end %}] of ASTNode | Array(ASTNode) | Nil
+    [{% for index in 0...Crystal::ASTBase::LINK_SLOTS %} node.@link{{index}}, {% end %}] of ASTBase | Array(ASTBase) | Nil
   {% end %}
 end
 
 # Returns the arrays in the link slots of a node.
-private def link_arrays(node : ASTNode) : Array(Array(ASTNode))
-  link_slots(node).compact_map(&.as?(Array(ASTNode)))
+private def link_arrays(node : ASTBase) : Array(Array(ASTBase))
+  link_slots(node).compact_map(&.as?(Array(ASTBase)))
 end
 
 private def vars(prefix, count)
@@ -251,5 +251,29 @@ describe "Semantic: bindings" do
     second.updates.should eq(1)
     node.enclosing_call.should be_nil
     node.dependencies.to_a.should eq(dependencies)
+  end
+
+  it "binds a node that has no location" do
+    program = Program.new
+    var = Var.new("x").at(Location.new("foo.cr", 1, 2))
+    filtered = var.filtered_by(TruthyFilter.instance)
+    filtered.should_not be_a(ASTNode)
+
+    target = UpdateCounter.new
+    target.bind_to filtered
+    var.type = program.nilable(program.int32)
+
+    filtered.type.should eq(program.int32)
+    target.type.should eq(program.int32)
+    target.dependencies.to_a.should eq([filtered])
+  end
+
+  it "raises without a location for a node that has none" do
+    filtered = Var.new("x").at(Location.new("foo.cr", 1, 2)).filtered_by(TruthyFilter.instance)
+
+    error = expect_raises(Crystal::TypeException, "oops") do
+      filtered.raise "oops"
+    end
+    error.line_number.should be_nil
   end
 end
