@@ -872,6 +872,8 @@ class Crystal::Command
   end
 
   private def new_compiler
-    @compiler = Compiler.new
+    @compiler = Compiler.new.tap do |compiler|
+      compiler.release_bindings = true
+    end
   end
 end

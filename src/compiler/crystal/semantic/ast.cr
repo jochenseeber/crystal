@@ -515,6 +515,11 @@ module Crystal
     # it will also be bound to it.
     property_flag mutably_closured
 
+    # Was this metavar bound to `Program#nil_var` when its links were
+    # released? Codegen gives such a variable `nil` before its first
+    # assignment.
+    property_flag bound_to_nil_var
+
     # Local variables associated with this meta variable.
     # Can be Var or MetaVar.
     property(local_vars) { [] of ASTNode }

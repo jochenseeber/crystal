@@ -276,4 +276,48 @@ describe "Semantic: bindings" do
     end
     error.line_number.should be_nil
   end
+
+  release_bindings_code = <<-CRYSTAL
+    def foo(x)
+      while x
+        y = 1
+        x = false
+      end
+      y
+    end
+
+    a = foo(true)
+    b = a ? 1 : 0
+    CRYSTAL
+
+  it "releases the links of a typed program and keeps what codegen reads" do
+    result = semantic(release_bindings_code)
+    program = result.program
+    program.release_bindings = true
+    typed_def = program.def_instances.values.find!(&.name.== "foo")
+    vars = program.vars.values + typed_def.vars.not_nil!.values
+    nilable = vars.select(&.dependencies.any?(&.same?(program.nil_var)))
+    nilable.map(&.name).should eq(["y"])
+
+    program.release_bindings(result.node)
+
+    vars.each do |var|
+      var.dependencies.should be_empty
+      var.bound_to_nil_var?.should eq(nilable.includes?(var))
+    end
+    typed_def.dependencies.should be_empty
+    typed_def.body.dependencies.should be_empty
+  end
+
+  it "keeps the links unless asked to release them" do
+    result = semantic(release_bindings_code)
+    program = result.program
+    program.release_bindings = false
+    typed_def = program.def_instances.values.find!(&.name.== "foo")
+
+    program.release_bindings(result.node)
+
+    typed_def.dependencies.should_not be_empty
+    program.vars["a"].dependencies.should_not be_empty
+  end
 end

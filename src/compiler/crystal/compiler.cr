@@ -96,6 +96,10 @@ module Crystal
     # (useful to type-check a program)
     property? no_codegen = false
 
+    # If `true`, the links between nodes that only the type inference uses
+    # are removed before codegen (see `Program#release_bindings?`).
+    property? release_bindings = false
+
     # Maximum number of LLVM modules that are compiled in parallel
     property n_threads : Int32 = {% if Fiber.has_constant?(:ExecutionContext) %}
       Fiber::ExecutionContext.default_workers_count
@@ -302,6 +306,7 @@ module Crystal
       program.color = color?
       program.stdout = stdout
       program.show_error_trace = show_error_trace?
+      program.release_bindings = release_bindings?
       program.progress_tracker = @progress_tracker
       program.warnings = @warnings
       program.optimization_mode = @optimization_mode
@@ -358,6 +363,12 @@ module Crystal
           exit 1
         end
       {% end %}
+
+      if program.release_bindings?
+        @progress_tracker.stage("Codegen (release bindings)") do
+          program.release_bindings node
+        end
+      end
 
       llvm_modules = @progress_tracker.stage("Codegen (crystal)") do
         program.codegen node, debug: debug, frame_pointers: frame_pointers,
