@@ -13,10 +13,13 @@ end
 
 # Runs a block the first time it is updated.
 private class UpdateHook < Crystal::Nop
+  getter updates = 0
+
   def initialize(&@hook : ->)
   end
 
   def update(from = nil)
+    @updates += 1
     if hook = @hook
       @hook = nil
       hook.call
@@ -145,5 +148,108 @@ describe "Semantic: bindings" do
     node.dependencies.to_a.should eq([dependency] of ASTNode)
     link_arrays(node).should eq([observers[SLOTS - 2..]])
     link_arrays(node).first.should be(array)
+  end
+
+  it "stores the enclosing call in the last slot" do
+    node = Var.new("node")
+    call = Call.new("foo")
+    node.set_enclosing_call call
+
+    node.enclosing_call.should be(call)
+    link_slots(node).last.should be(call)
+    node.dependencies.empty?.should be_true
+
+    # The dependencies share the slots before the call.
+    dependencies = vars("v", SLOTS)
+    dependencies.each { |dependency| node.bind_to dependency }
+    node.dependencies.to_a.should eq(dependencies)
+    link_arrays(node).should eq([dependencies[SLOTS - 2..]])
+    node.enclosing_call.should be(call)
+  end
+
+  it "frees the last slot for the enclosing call" do
+    node = Var.new("node")
+    dependencies = vars("v", SLOTS)
+    dependencies.each { |dependency| node.bind_to dependency }
+    link_arrays(node).should be_empty
+
+    call = Call.new("foo")
+    node.set_enclosing_call call
+
+    node.enclosing_call.should be(call)
+    node.dependencies.to_a.should eq(dependencies)
+    link_arrays(node).should eq([dependencies[SLOTS - 2..]])
+  end
+
+  it "frees the last slot when the slots before it hold the other kind" do
+    program = Program.new
+    node = Var.new("node")
+    observers = Array.new(SLOTS - 1) { UpdateCounter.new }
+    observers.each(&.bind_to(node))
+    dependency = Var.new("dependency")
+    node.bind_to dependency
+
+    call = Call.new("foo")
+    node.set_enclosing_call call
+    node.remove_enclosing_call call
+
+    node.enclosing_call.should be_nil
+    node.dependencies.to_a.should eq([dependency] of ASTNode)
+    link_arrays(node).should eq([observers[SLOTS - 3..]])
+    node.type = program.int32
+    observers.map(&.updates).should eq(Array.new(SLOTS - 1, 1))
+  end
+
+  it "releases an empty array for the enclosing call" do
+    node = Var.new("node")
+    vars("v", SLOTS + 1).each { |dependency| node.bind_to dependency }
+    node.unbind_all
+    observers = vars("o", SLOTS - 1)
+    observers.each(&.bind_to(node))
+    link_arrays(node).should eq([[] of ASTNode])
+
+    call = Call.new("foo")
+    node.set_enclosing_call call
+
+    node.enclosing_call.should be(call)
+    link_arrays(node).should be_empty
+    link_slots(node).should eq(observers + [call])
+  end
+
+  it "gives the slot back when the enclosing call is removed" do
+    node = Var.new("node")
+    call = Call.new("foo")
+    node.set_enclosing_call call
+    node.remove_enclosing_call Call.new("bar")
+    node.enclosing_call.should be(call)
+
+    node.remove_enclosing_call call
+    node.enclosing_call.should be_nil
+
+    dependencies = vars("v", SLOTS)
+    dependencies.each { |dependency| node.bind_to dependency }
+    link_slots(node).should eq(dependencies)
+  end
+
+  it "updates every observer when an observer sets the enclosing call" do
+    program = Program.new
+    node = Var.new("node")
+    call = Call.new("foo")
+
+    # Setting the call merges the two observers into one slot. The second
+    # observer removes the call again, which would be recalculated otherwise.
+    first = UpdateHook.new { node.set_enclosing_call call }
+    second = UpdateHook.new { node.remove_enclosing_call call }
+    first.bind_to node
+    second.bind_to node
+    dependencies = vars("v", SLOTS - 2)
+    dependencies.each { |dependency| node.bind_to dependency }
+
+    node.type = program.int32
+
+    first.updates.should eq(1)
+    second.updates.should eq(1)
+    node.enclosing_call.should be_nil
+    node.dependencies.to_a.should eq(dependencies)
   end
 end
