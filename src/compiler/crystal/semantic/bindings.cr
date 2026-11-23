@@ -54,18 +54,22 @@ module Crystal
   end
 
   class ASTNode
-    # The number of link slots of every node.
-    LINK_SLOTS = 2
+    # The number of link slots of every node, at least 3.
+    LINK_SLOTS = 3
 
-    # Dependencies and observers share `LINK_SLOTS` link slots. Each slot
-    # holds nodes of one kind, either a single node or an array. Bit `i` of
-    # `link_kinds` is set if slot `i` holds observers.
+    # Dependencies, observers and the enclosing call share `LINK_SLOTS` link
+    # slots. Each slot holds nodes of one kind, either a single node or an
+    # array. Bit `i` of `link_kinds` is set if slot `i` holds observers.
     #
     # Used slots come first, with no gaps. The nodes of one kind keep their
     # order across slots, and only the last slot of a kind can hold an array.
     # A slot keeps its array when nodes are removed, even when it empties, so
     # that adding nodes again needs no allocation. An empty array gives up its
     # slot when a node needs one.
+    #
+    # The enclosing call, if there is one, is in the last slot, which
+    # `enclosing_call_link?` then tells. Dependencies and observers share the
+    # slots before it.
     #
     # A union of reference types is a single pointer, so each slot takes 8
     # bytes, and most nodes need no array: compiling the compiler, 94% of
@@ -75,6 +79,7 @@ module Crystal
     {% end %}
 
     property_flag link_kinds : UInt8 = 0, bits: {{LINK_SLOTS}}, setter: false
+    property_flag enclosing_call_link, setter: false
 
     def dependencies : DependencyLinks
       DependencyLinks.new(self)
@@ -94,7 +99,7 @@ module Crystal
         links = { {% for index in 0...LINK_SLOTS %} @link{{index}}, {% end %} }
         kinds = link_kinds
 
-        LINK_SLOTS.times do |index|
+        link_slots.times do |index|
           next unless (kinds.bit(index) == 1) == observers
 
           case link = links[index]
@@ -111,7 +116,7 @@ module Crystal
     # :nodoc:
     def link_count(observers : Bool) : Int32
       count = 0
-      LINK_SLOTS.times do |index|
+      link_slots.times do |index|
         next unless observer_link?(index) == observers
 
         case link = link(index)
@@ -131,15 +136,16 @@ module Crystal
         return
       end
 
+      slots = link_slots
       used = used_links
-      if used == LINK_SLOTS && (empty = empty_link_index)
+      if used == slots && (empty = empty_link_index)
         # An empty array of the other kind holds a slot: release it.
         set_link(empty, nil, !observers)
         compact_links
         used -= 1
       end
 
-      if used < LINK_SLOTS
+      if used < slots
         set_link(used, node, observers)
       elsif last
         set_link(last, [link(last).as(ASTNode), node] of ASTNode, observers)
@@ -147,15 +153,8 @@ module Crystal
         # All slots hold the other kind: merge its last two slots to make
         # room. Only its last slot can be an array, so the one before it
         # holds a single node.
-        first = link(LINK_SLOTS - 2).as(ASTNode)
-        merged =
-          case link = link(LINK_SLOTS - 1)
-          in ASTNode        then [first, link] of ASTNode
-          in Array(ASTNode) then link.unshift(first)
-          in Nil            then ::raise "BUG: expected all link slots to be used"
-          end
-        set_link(LINK_SLOTS - 2, merged, !observers)
-        set_link(LINK_SLOTS - 1, node, observers)
+        set_link(slots - 2, merge_links(link(slots - 2).as(ASTNode), link(slots - 1)), !observers)
+        set_link(slots - 1, node, observers)
       end
     end
 
@@ -180,7 +179,7 @@ module Crystal
     # :nodoc:
     def reject_links!(observers : Bool, & : ASTNode ->) : Nil
       emptied = false
-      LINK_SLOTS.times do |index|
+      link_slots.times do |index|
         next unless observer_link?(index) == observers
 
         case link = link(index)
@@ -228,17 +227,24 @@ module Crystal
       link_kinds.bit(index) == 1
     end
 
-    # Returns the number of used slots, which come first.
+    # Returns the number of slots that dependencies and observers share.
+    private def link_slots : Int32
+      enclosing_call_link? ? LINK_SLOTS - 1 : LINK_SLOTS
+    end
+
+    # Returns the number of slots that dependencies and observers use, which
+    # come first.
     private def used_links : Int32
-      LINK_SLOTS.times do |index|
+      slots = link_slots
+      slots.times do |index|
         return index if link(index).nil?
       end
-      LINK_SLOTS
+      slots
     end
 
     # Returns the index of a slot holding an empty array.
     private def empty_link_index : Int32?
-      LINK_SLOTS.times do |index|
+      link_slots.times do |index|
         link = link(index)
         return index if link.is_a?(Array(ASTNode)) && link.empty?
       end
@@ -246,7 +252,7 @@ module Crystal
     end
 
     # Returns the index of the last used slot of a kind before slot `before`.
-    private def last_link_index(observers : Bool, *, before : Int32 = LINK_SLOTS) : Int32?
+    private def last_link_index(observers : Bool, *, before : Int32 = link_slots) : Int32?
       (before - 1).downto(0) do |index|
         return index if !link(index).nil? && observer_link?(index) == observers
       end
@@ -255,17 +261,75 @@ module Crystal
 
     # Moves the used slots to the front, keeping their order.
     private def compact_links : Nil
+      slots = link_slots
       target = 0
-      LINK_SLOTS.times do |index|
+      slots.times do |index|
         if link = link(index)
           set_link(target, link, observer_link?(index)) unless target == index
           target += 1
         end
       end
-      (target...LINK_SLOTS).each { |index| set_link(index, nil, false) }
+      (target...slots).each { |index| set_link(index, nil, false) }
     end
 
-    property enclosing_call : Call?
+    # Returns an array of a node and the nodes of the slot after it.
+    private def merge_links(first : ASTNode, link : ASTNode | Array(ASTNode) | Nil) : Array(ASTNode)
+      case link
+      in ASTNode        then [first, link] of ASTNode
+      in Array(ASTNode) then link.unshift(first)
+      in Nil            then ::raise "BUG: expected a used link slot"
+      end
+    end
+
+    # Frees the last slot for the enclosing call: its nodes move into the
+    # slots before it.
+    private def free_last_link : Nil
+      last = LINK_SLOTS - 1
+      return if link(last).nil?
+
+      if empty = empty_link_index
+        # An empty array holds a slot: release it. All slots were in use, so
+        # the last one is free afterwards.
+        set_link(empty, nil, false)
+        compact_links
+        return
+      end
+
+      link = link(last)
+      observers = observer_link?(last)
+      if previous = last_link_index(observers, before: last)
+        # Only the last slot of a kind can be an array, so the one before it
+        # holds a single node.
+        set_link(previous, merge_links(link(previous).as(ASTNode), link), observers)
+      else
+        # The slots before it all hold the other kind: merge the last two of
+        # them.
+        set_link(last - 2, merge_links(link(last - 2).as(ASTNode), link(last - 1)), !observers)
+        set_link(last - 1, link, observers)
+      end
+      set_link(last, nil, false)
+    end
+
+    # Returns the call that this node is the receiver, an argument or the
+    # block of. A change of this node's type recalculates the call.
+    def enclosing_call : Call?
+      {% begin %}
+        @link{{LINK_SLOTS - 1}}.as(Call) if enclosing_call_link?
+      {% end %}
+    end
+
+    private def enclosing_call=(enclosing_call : Call?) : Nil
+      {% begin %}
+        if enclosing_call
+          free_last_link unless enclosing_call_link?
+          @link{{LINK_SLOTS - 1}} = enclosing_call
+          self.enclosing_call_link = true
+        elsif enclosing_call_link?
+          @link{{LINK_SLOTS - 1}} = nil
+          self.enclosing_call_link = false
+        end
+      {% end %}
+    end
 
     @type : Type?
 
@@ -443,7 +507,7 @@ module Crystal
     end
 
     def set_enclosing_call(enclosing_call)
-      current_enclosing_call = @enclosing_call
+      current_enclosing_call = self.enclosing_call
       if current_enclosing_call
         # This can happen when a block is typed, and meanwhile a new
         # generic instance type is created that triggers the block to
@@ -452,19 +516,19 @@ module Crystal
           raise "BUG: already had a different enclosing call"
         end
       else
-        @enclosing_call = enclosing_call
+        self.enclosing_call = enclosing_call
       end
     end
 
     def remove_enclosing_call(enclosing_call)
-      @enclosing_call = nil if @enclosing_call.same?(enclosing_call)
+      self.enclosing_call = nil if self.enclosing_call.same?(enclosing_call)
     end
 
     def notify_observers
       observers.each &.update self
-      @enclosing_call.try &.recalculate
+      enclosing_call.try &.recalculate
       observers.each &.propagate
-      @enclosing_call.try &.propagate
+      enclosing_call.try &.propagate
     end
 
     def update(from = nil)
