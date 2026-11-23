@@ -139,7 +139,8 @@ module Crystal
     property! owner : Type
     property! original_owner : Type
     property vars : MetaVars?
-    property previous : DefWithMetadata?
+    # The definition this one overrides, see `ModuleType#add_def`.
+    property previous_definition : Def?
     property next : Def?
     property freeze_type : Type?
 
@@ -259,9 +260,19 @@ module Crystal
       {min_size, max_size}
     end
 
+    # The definition this one overrides, with the metadata to match a call
+    # against it. Only the `Def` is stored: few defs override another one.
+    def previous : DefWithMetadata?
+      previous_definition.try { |a_def| DefWithMetadata.new(a_def) }
+    end
+
+    def previous=(previous : DefWithMetadata?)
+      self.previous_definition = previous.try(&.def)
+    end
+
     def clone_without_location
       a_def = previous_def
-      a_def.previous = previous
+      a_def.previous_definition = previous_definition
       a_def.raises = raises?
       a_def.no_inline = no_inline?
       a_def.always_inline = always_inline?

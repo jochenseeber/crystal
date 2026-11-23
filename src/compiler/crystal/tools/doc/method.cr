@@ -89,9 +89,8 @@ class Crystal::Doc::Method
   end
 
   private def previous_def_docs(a_def)
-    while previous = a_def.previous
-      a_def = previous.def
-      doc = a_def.doc
+    while previous = a_def.previous_definition
+      doc = previous.doc
       return doc if doc
     end
 
