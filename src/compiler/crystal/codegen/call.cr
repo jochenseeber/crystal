@@ -410,7 +410,7 @@ class Crystal::CodeGenVisitor
           position_at_end current_def_label
 
           # Prepare this specific call
-          call.target_defs = [a_def] of Def
+          call.target_def = a_def
           call.obj.try &.set_type(a_def.owner)
           call.args.zip(a_def.args) do |call_arg, a_def_arg|
             call_arg.set_type(a_def_arg.type)
