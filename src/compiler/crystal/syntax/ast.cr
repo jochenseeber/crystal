@@ -2149,17 +2149,47 @@ module Crystal
   #     const [ '::' const ]*
   #
   class Path < ASTNode
-    property names : Array(String)
+    # The names of this path. A single name is stored as such: most paths
+    # have exactly one, and an array for it takes 48 bytes.
+    @names : String | Array(String)
+
+    # The names of a path, as a read-only list.
+    struct Names
+      include Indexable(String)
+
+      def initialize(@names : String | Array(String))
+      end
+
+      def size : Int32
+        case names = @names
+        in String        then 1
+        in Array(String) then names.size
+        end
+      end
+
+      def unsafe_fetch(index : Int) : String
+        case names = @names
+        in String        then names
+        in Array(String) then names.unsafe_fetch(index)
+        end
+      end
+    end
+
+    def names : Names
+      Names.new(@names)
+    end
 
     property_flag global
     property_flag visibility : Visibility = Visibility::Public
 
-    def initialize(@names : Array, global = false)
+    def initialize(names : Array(String), global = false)
+      @names = names.size == 1 ? names.unsafe_fetch(0) : names
       self.global = global
     end
 
-    def self.new(name : String, global = false)
-      new [name], global
+    def initialize(name : String, global = false)
+      @names = name
+      self.global = global
     end
 
     def self.new(name1 : String, name2 : String, global = false)
