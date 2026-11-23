@@ -254,15 +254,30 @@ module Crystal
   # want to do that conditionally on the `if`'s `then` block being NoReturn or
   # not.
   #
-  # This filter does that. It receives the var's type (String in this case)
-  # and applies a filter to the `then` (or `else`) part of the `if`: if it's
-  # no return, we return just that. If not, we return the var's type.
-  class NoReturnFilter < TypeFilter
-    def initialize(@var : ASTNode)
+  # This node does that. It holds the var (whose type is String in this case)
+  # and observes the `then` (or `else`) part of the `if`: if it's no return,
+  # its type is just that. If not, it's the var's type.
+  #
+  # It is a node of its own instead of a `TypeFilteredNode` with a filter that
+  # holds the var: there is one for each variable of such an `if`, and the
+  # filter would be one more object for each of them.
+  class NoReturnFilteredNode < ASTNode
+    def initialize(@var : ASTNode, @node : ASTNode)
+      dependencies.push @node
+      node.add_observer self
+      update(@node)
     end
 
-    def apply(other)
-      other.try(&.no_return?) ? other : @var.type?
+    def update(from = nil)
+      from_type = from.try &.type?
+
+      if from_type
+        self.type = from_type.no_return? ? from_type : @var.type?
+      end
+    end
+
+    def clone_without_location
+      NoReturnFilteredNode.new(@var, @node)
     end
   end
 
