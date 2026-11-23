@@ -2771,7 +2771,7 @@ module Crystal
       case method
       when "names"
         interpret_check_args do
-          ArrayLiteral.map(@names) { |name| MacroId.new(name) }
+          ArrayLiteral.map(names) { |name| MacroId.new(name) }
         end
       when "global"
         interpreter.warnings.add_warning_at(name_loc, "Deprecated Path#global. Use `#global?` instead")
@@ -2793,7 +2793,7 @@ module Crystal
       String.build do |io|
         io << "::" if global?
 
-        @names.join(io, "::")
+        names.join(io, "::")
       end
     end
   end

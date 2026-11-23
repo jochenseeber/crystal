@@ -9,7 +9,7 @@ module Crystal
       (node.global? ? program : self).lookup_similar_path(node.names)
     end
 
-    def lookup_similar_path(names : Array(String), lookup_in_namespace = true)
+    def lookup_similar_path(names : Indexable(String), lookup_in_namespace = true)
       type = self
       names.each_with_index do |name, idx|
         previous_type = type
@@ -22,7 +22,7 @@ module Crystal
           end
 
           if best_match
-            return (names[0...idx] + [best_match]).join "::"
+            return (names.first(idx) + [best_match]).join "::"
           else
             break
           end

@@ -645,9 +645,35 @@ module Crystal
   end
 
   class Path
-    property target_const : Const?
-    property target_type : Type?
-    property syntax_replacement : ASTNode?
+    # What this path resolves to: a constant, another type, or a node that
+    # takes the path's place. A path has only one of them, and a `Const` is
+    # a `Type`, so they share a field.
+    @target : Type | ASTNode | Nil
+
+    def target_const : Const?
+      @target.as?(Const)
+    end
+
+    def target_const=(const : Const) : Const
+      @target = const
+    end
+
+    def target_type : Type?
+      target = @target
+      target if target.is_a?(Type) && !target.is_a?(Const)
+    end
+
+    def target_type=(type : Type) : Type
+      @target = type
+    end
+
+    def syntax_replacement : ASTNode?
+      @target.as?(ASTNode)
+    end
+
+    def syntax_replacement=(node : ASTNode) : ASTNode
+      @target = node
+    end
   end
 
   class Call

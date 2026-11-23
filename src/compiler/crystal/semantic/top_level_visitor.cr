@@ -1321,8 +1321,7 @@ class Crystal::TopLevelVisitor < Crystal::SemanticVisitor
           file_module || current_type
         end
       else
-        prefix = path.clone
-        prefix.names.pop
+        prefix = Path.new(path.names.first(path.names.size - 1), path.global?).at(path)
         lookup_type_def_name_creating_modules prefix
       end
 
