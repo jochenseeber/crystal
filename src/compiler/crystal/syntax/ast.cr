@@ -1063,25 +1063,60 @@ module Crystal
   # the symbol of that operator instead of a string.
   #
   class Call < ASTNode
+    # The fields that few calls use, declared with `extension_property`. A
+    # call allocates it when one of them is first set to a value.
+    class Extension
+    end
+
     property obj : ASTNode?
     property name : String
     property args : Array(ASTNode)
     property block : Block?
-    property block_arg : ASTNode?
-    property named_args : Array(NamedArgument)?
+    @extension : Extension?
     property name_location : Location?
-    property doc : String?
-    property visibility = Visibility::Public
-    property? global : Bool
-    property? expansion = false
-    property? args_in_brackets = false
-    property? has_parentheses = false
+    property_flag visibility : Visibility = Visibility::Public
+    property_flag global
+    property_flag expansion
+    property_flag args_in_brackets
+    property_flag has_parentheses
+
+    # :nodoc:
+    #
+    # Defines a nilable property stored in the call's `Extension`. The getter
+    # returns `nil` while there is no extension; the setter allocates one only
+    # for a value other than `nil`.
+    macro extension_property(decl)
+      class Extension
+        property {{decl}}
+      end
+
+      def {{decl.var}} : {{decl.type}}
+        @extension.try &.{{decl.var}}
+      end
+
+      def {{decl.var}}=({{decl.var}} : {{decl.type}})
+        if extension = @extension
+          extension.{{decl.var}} = {{decl.var}}
+        elsif !{{decl.var}}.nil?
+          extension = @extension = Extension.new
+          extension.{{decl.var}} = {{decl.var}}
+        end
+        {{decl.var}}
+      end
+    end
+
+    extension_property block_arg : ASTNode?
+    extension_property named_args : Array(NamedArgument)?
+    extension_property doc : String?
 
     # A sentinel instead of `nil` keeps the ivar from being a union, which would
     # make every `Call` larger.
     @name_size = -1
 
-    def initialize(@obj : ASTNode?, @name : String, @args : Array(ASTNode) = [] of ASTNode, @block = nil, @block_arg = nil, @named_args = nil, @global : Bool = false)
+    def initialize(@obj : ASTNode?, @name : String, @args : Array(ASTNode) = [] of ASTNode, @block = nil, block_arg : ASTNode? = nil, named_args : Array(NamedArgument)? = nil, global : Bool = false)
+      self.block_arg = block_arg
+      self.named_args = named_args
+      self.global = global
       if block = @block
         block.call = self
       end
@@ -1132,13 +1167,13 @@ module Crystal
     def accept_children(visitor)
       @obj.try &.accept visitor
       @args.each &.accept visitor
-      @named_args.try &.each &.accept visitor
-      @block_arg.try &.accept visitor
+      named_args.try &.each &.accept visitor
+      block_arg.try &.accept visitor
       @block.try &.accept visitor
     end
 
     def clone_without_location
-      clone = Call.new(@obj.clone, @name, @args.clone, @block.clone, @block_arg.clone, @named_args.clone, @global)
+      clone = Call.new(@obj.clone, @name, @args.clone, @block.clone, block_arg.clone, named_args.clone, global?)
       clone.name_location = name_location
       clone.has_parentheses = has_parentheses?
       clone.name_size = name_size

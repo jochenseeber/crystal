@@ -663,7 +663,7 @@ module Crystal
   end
 
   class Call
-    property before_vars : MetaVars?
+    extension_property before_vars : MetaVars?
 
     def clone_without_location
       cloned = previous_def
