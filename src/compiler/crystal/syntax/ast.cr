@@ -196,6 +196,35 @@ module Crystal
       end
     end
 
+    # Defines a nilable property that few nodes of a class use, stored in an
+    # object of the class's `Extension` instead of the node. The class
+    # declares `class Extension` and `@extension : Extension?`; a node
+    # allocates its extension when one of these properties is first set to a
+    # value other than `nil`, and keeps it.
+    #
+    # *getter* names the getter (default: the property's name), for a
+    # property whose public getter computes a fallback. With *setter* `false`
+    # the setter is private.
+    private macro extension_property(decl, *, getter = nil, setter = true)
+      class Extension
+        property {{decl}}
+      end
+
+      def {{(getter || decl.var).id}} : {{decl.type}}
+        @extension.try &.{{decl.var}}
+      end
+
+      {% if !setter %}private{% end %} def {{decl.var}}=(value : {{decl.type}})
+        if extension = @extension
+          extension.{{decl.var}} = value
+        elsif !value.nil?
+          extension = @extension = Extension.new
+          extension.{{decl.var}} = value
+        end
+        value
+      end
+    end
+
     # The location where this node starts, or `nil`
     # if the location is not known.
     property location : Location?
@@ -1063,8 +1092,7 @@ module Crystal
   # the symbol of that operator instead of a string.
   #
   class Call < ASTNode
-    # The fields that few calls use, declared with `extension_property`. A
-    # call allocates it when one of them is first set to a value.
+    # The fields that few calls use, see `ASTNode.extension_property`.
     class Extension
     end
 
@@ -1079,31 +1107,6 @@ module Crystal
     property_flag expansion
     property_flag args_in_brackets
     property_flag has_parentheses
-
-    # :nodoc:
-    #
-    # Defines a nilable property stored in the call's `Extension`. The getter
-    # returns `nil` while there is no extension; the setter allocates one only
-    # for a value other than `nil`.
-    macro extension_property(decl)
-      class Extension
-        property {{decl}}
-      end
-
-      def {{decl.var}} : {{decl.type}}
-        @extension.try &.{{decl.var}}
-      end
-
-      def {{decl.var}}=({{decl.var}} : {{decl.type}})
-        if extension = @extension
-          extension.{{decl.var}} = {{decl.var}}
-        elsif !{{decl.var}}.nil?
-          extension = @extension = Extension.new
-          extension.{{decl.var}} = {{decl.var}}
-        end
-        {{decl.var}}
-      end
-    end
 
     extension_property block_arg : ASTNode?
     extension_property named_args : Array(NamedArgument)?
@@ -1677,16 +1680,21 @@ module Crystal
   #     'end'
   #
   class Def < ASTNode
-    property free_vars : Array(String)?
-    property receiver : ASTNode?
+    # The fields that few defs use, see `ASTNode.extension_property`.
+    class Extension
+    end
+
     property name : String
     property args : Array(Arg)
-    property double_splat : Arg?
     property body : ASTNode
     property block_arg : Arg?
     property return_type : ASTNode?
     property name_location : Location?
-    property doc : String?
+    @extension : Extension?
+    extension_property free_vars : Array(String)?
+    extension_property receiver : ASTNode?
+    extension_property double_splat : Arg?
+    extension_property doc : String?
 
     # The fields below are smaller than a pointer. They are declared last and
     # together, so that they fill 8 bytes without padding. The fields that
@@ -1706,8 +1714,11 @@ module Crystal
     property_flag uses_block_arg
     property_flag assigns_special_var
 
-    def initialize(@name, @args = [] of Arg, body = nil, @receiver = nil, @block_arg = nil, @return_type = nil, macro_def = false, block_arity = nil, abstract is_abstract = false, splat_index = nil, @double_splat = nil, @free_vars = nil)
+    def initialize(@name, @args = [] of Arg, body = nil, receiver : ASTNode? = nil, @block_arg = nil, @return_type = nil, macro_def = false, block_arity = nil, abstract is_abstract = false, splat_index = nil, double_splat : Arg? = nil, free_vars : Array(String)? = nil)
       @body = Expressions.from body
+      self.receiver = receiver
+      self.double_splat = double_splat
+      self.free_vars = free_vars
       self.macro_def = macro_def
       self.block_arity = block_arity
       self.abstract = is_abstract
@@ -1715,16 +1726,16 @@ module Crystal
     end
 
     def accept_children(visitor)
-      @receiver.try &.accept visitor
+      receiver.try &.accept visitor
       @args.each &.accept visitor
-      @double_splat.try &.accept visitor
+      double_splat.try &.accept visitor
       @block_arg.try &.accept visitor
       @return_type.try &.accept visitor
       @body.accept visitor
     end
 
     def clone_without_location
-      a_def = Def.new(@name, @args.clone, @body.clone, @receiver.clone, @block_arg.clone, @return_type.clone, macro_def?, block_arity, abstract?, splat_index, @double_splat.clone, @free_vars)
+      a_def = Def.new(@name, @args.clone, @body.clone, receiver.clone, @block_arg.clone, @return_type.clone, macro_def?, block_arity, abstract?, splat_index, double_splat.clone, free_vars)
       a_def.calls_super = calls_super?
       a_def.calls_initialize = calls_initialize?
       a_def.calls_previous_def = calls_previous_def?
@@ -1735,7 +1746,7 @@ module Crystal
       a_def
     end
 
-    def_equals_and_hash @name, @args, @body, @receiver, @block_arg, @return_type, macro_def?, @block_arity, abstract?, @splat_index, @double_splat
+    def_equals_and_hash @name, @args, @body, receiver, @block_arg, @return_type, macro_def?, @block_arity, abstract?, @splat_index, double_splat
 
     def autogenerated?
       location == body.location
