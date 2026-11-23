@@ -5,7 +5,47 @@ require "./type_lookup"
 class Crystal::Call
   property! scope : Type
   property! parent_visitor : MainVisitor
-  property target_defs : Array(Def)?
+
+  # The defs this call resolves to. A single def is stored as such: almost
+  # every call has exactly one, and an array for it takes 48 bytes.
+  @target_defs : Def | Array(Def) | Nil
+
+  # The target defs of a call, as a read-only list.
+  struct TargetDefs
+    include Indexable(Def)
+
+    def initialize(@defs : Def | Array(Def))
+    end
+
+    def size : Int32
+      case defs = @defs
+      in Def        then 1
+      in Array(Def) then defs.size
+      end
+    end
+
+    def unsafe_fetch(index : Int) : Def
+      case defs = @defs
+      in Def        then defs
+      in Array(Def) then defs.unsafe_fetch(index)
+      end
+    end
+  end
+
+  def target_defs : TargetDefs?
+    if defs = @target_defs
+      TargetDefs.new(defs)
+    end
+  end
+
+  def target_defs=(defs : Array(Def)?) : Nil
+    @target_defs = defs && defs.size == 1 ? defs.unsafe_fetch(0) : defs
+  end
+
+  def target_def=(target_def : Def) : Nil
+    @target_defs = target_def
+  end
+
   property_flag uses_with_scope
   extension_property with_scope : Type?
   extension_property expanded : ASTNode?
@@ -23,15 +63,11 @@ class Crystal::Call
   end
 
   def target_def
-    if defs = @target_defs
-      if defs.size == 1
-        return defs.first
-      else
-        ::raise "#{defs.size} target defs for #{self}"
-      end
+    case defs = @target_defs
+    in Def        then defs
+    in Array(Def) then ::raise "#{defs.size} target defs for #{self}"
+    in Nil        then ::raise "Zero target defs for #{self}"
     end
-
-    ::raise "Zero target defs for #{self}"
   end
 
   def recalculate
@@ -97,7 +133,7 @@ class Crystal::Call
 
     return if @target_defs
 
-    @target_defs = matches
+    self.target_defs = matches
 
     bind_to matches if matches
     bind_to block.break if block
