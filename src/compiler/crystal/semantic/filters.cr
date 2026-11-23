@@ -3,7 +3,7 @@ module Crystal
     include HierarchyObserver
 
     def initialize(@filter : TypeFilter, @node : ASTNode)
-      @dependencies.push @node
+      dependencies.push @node
       node.add_observer self
       update(@node)
     end

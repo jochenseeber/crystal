@@ -1,77 +1,270 @@
 module Crystal
-  # Specialized container for ASTNodes to use for bindings tracking.
-  #
-  # The average number of elements in both dependencies and observers is below 2
-  # for ASTNodes. This struct inlines the first two elements saving up 4
-  # allocations per node (two arrays, with a header and buffer for each) but we
-  # need to pay a slight extra cost in memory upfront: a total of 6 pointers (48
-  # bytes) vs 2 pointers (16 bytes). The other downside is that since this is a
-  # struct, we need to be careful with mutation.
-  struct SmallNodeList
+  # A view of one kind of link of an `ASTNode`, kept in the node's link slots
+  # (see `ASTNode#each_link`).
+  abstract struct NodeLinks
     include Enumerable(ASTNode)
 
-    @first : ASTNode?
-    @second : ASTNode?
-    @tail : Array(ASTNode)?
+    def initialize(@node : ASTNode)
+    end
+
+    # Whether this view holds observers instead of dependencies.
+    private abstract def observers? : Bool
 
     def each(& : ASTNode ->)
-      yield @first || return
-      yield @second || return
-      @tail.try(&.each { |node| yield node })
+      @node.each_link(observers?) { |node| yield node }
     end
 
     def size
-      if @first.nil?
-        0
-      elsif @second.nil?
-        1
-      elsif (tail = @tail).nil?
-        2
-      else
-        2 + tail.size
-      end
+      @node.link_count(observers?)
     end
 
     def push(node : ASTNode) : self
-      if @first.nil?
-        @first = node
-      elsif @second.nil?
-        @second = node
-      elsif (tail = @tail).nil?
-        @tail = [node] of ASTNode
-      else
-        tail.push(node)
-      end
-      self
-    end
-
-    def reject!(& : ASTNode ->) : self
-      if first = @first
-        if second = @second
-          if tail = @tail
-            tail.reject! { |node| yield node }
-          end
-          if yield second
-            @second = tail.try &.shift?
-          end
-        end
-        if yield first
-          @first = @second
-          @second = tail.try &.shift?
-        end
-      end
+      @node.push_link(node, observers?)
       self
     end
 
     def concat(nodes : Enumerable(ASTNode)) : self
-      nodes.each { |node| self.push(node) }
+      nodes.each { |node| push(node) }
       self
+    end
+
+    def reject!(& : ASTNode ->) : self
+      @node.reject_links!(observers?) { |node| yield node }
+      self
+    end
+
+    # Removes and returns the last node, or returns `nil` if there is none.
+    def pop? : ASTNode?
+      @node.pop_link?(observers?)
+    end
+  end
+
+  # The nodes an `ASTNode` takes its type from.
+  struct DependencyLinks < NodeLinks
+    private def observers? : Bool
+      false
+    end
+  end
+
+  # The nodes that take their type from an `ASTNode`.
+  struct ObserverLinks < NodeLinks
+    private def observers? : Bool
+      true
     end
   end
 
   class ASTNode
-    getter dependencies : SmallNodeList = SmallNodeList.new
-    @observers : SmallNodeList = SmallNodeList.new
+    # The number of link slots of every node.
+    LINK_SLOTS = 2
+
+    # Dependencies and observers share `LINK_SLOTS` link slots. Each slot
+    # holds nodes of one kind, either a single node or an array. Bit `i` of
+    # `link_kinds` is set if slot `i` holds observers.
+    #
+    # Used slots come first, with no gaps. The nodes of one kind keep their
+    # order across slots, and only the last slot of a kind can hold an array.
+    # A slot keeps its array when nodes are removed, even when it empties, so
+    # that adding nodes again needs no allocation. An empty array gives up its
+    # slot when a node needs one.
+    #
+    # A union of reference types is a single pointer, so each slot takes 8
+    # bytes, and most nodes need no array: compiling the compiler, 94% of
+    # nodes have at most three dependencies and observers together.
+    {% for index in 0...LINK_SLOTS %}
+      @link{{index}} : ASTNode | Array(ASTNode) | Nil
+    {% end %}
+
+    property_flag link_kinds : UInt8 = 0, bits: {{LINK_SLOTS}}, setter: false
+
+    def dependencies : DependencyLinks
+      DependencyLinks.new(self)
+    end
+
+    private def observers : ObserverLinks
+      ObserverLinks.new(self)
+    end
+
+    # :nodoc:
+    #
+    # Yields the nodes of the slots as they are when the method is called.
+    # The block can add and remove links of this node, which moves nodes
+    # between slots, so reading the slots one at a time could miss a node.
+    def each_link(observers : Bool, & : ASTNode ->) : Nil
+      {% begin %}
+        links = { {% for index in 0...LINK_SLOTS %} @link{{index}}, {% end %} }
+        kinds = link_kinds
+
+        LINK_SLOTS.times do |index|
+          next unless (kinds.bit(index) == 1) == observers
+
+          case link = links[index]
+          in ASTNode
+            yield link
+          in Array(ASTNode)
+            link.each { |node| yield node }
+          in Nil
+          end
+        end
+      {% end %}
+    end
+
+    # :nodoc:
+    def link_count(observers : Bool) : Int32
+      count = 0
+      LINK_SLOTS.times do |index|
+        next unless observer_link?(index) == observers
+
+        case link = link(index)
+        in ASTNode        then count += 1
+        in Array(ASTNode) then count += link.size
+        in Nil
+        end
+      end
+      count
+    end
+
+    # :nodoc:
+    def push_link(node : ASTNode, observers : Bool) : Nil
+      last = last_link_index(observers)
+      if last && (array = link(last)).is_a?(Array(ASTNode))
+        array << node
+        return
+      end
+
+      used = used_links
+      if used == LINK_SLOTS && (empty = empty_link_index)
+        # An empty array of the other kind holds a slot: release it.
+        set_link(empty, nil, !observers)
+        compact_links
+        used -= 1
+      end
+
+      if used < LINK_SLOTS
+        set_link(used, node, observers)
+      elsif last
+        set_link(last, [link(last).as(ASTNode), node] of ASTNode, observers)
+      else
+        # All slots hold the other kind: merge its last two slots to make
+        # room. Only its last slot can be an array, so the one before it
+        # holds a single node.
+        first = link(LINK_SLOTS - 2).as(ASTNode)
+        merged =
+          case link = link(LINK_SLOTS - 1)
+          in ASTNode        then [first, link] of ASTNode
+          in Array(ASTNode) then link.unshift(first)
+          in Nil            then ::raise "BUG: expected all link slots to be used"
+          end
+        set_link(LINK_SLOTS - 2, merged, !observers)
+        set_link(LINK_SLOTS - 1, node, observers)
+      end
+    end
+
+    # :nodoc:
+    def pop_link?(observers : Bool) : ASTNode?
+      return unless last = last_link_index(observers)
+
+      if (array = link(last)).is_a?(Array(ASTNode))
+        return array.pop unless array.empty?
+
+        # The empty array keeps its slot, so the last node is in a slot
+        # before it, which holds a single node.
+        return unless last = last_link_index(observers, before: last)
+      end
+
+      node = link(last).as(ASTNode)
+      set_link(last, nil, observers)
+      compact_links
+      node
+    end
+
+    # :nodoc:
+    def reject_links!(observers : Bool, & : ASTNode ->) : Nil
+      emptied = false
+      LINK_SLOTS.times do |index|
+        next unless observer_link?(index) == observers
+
+        case link = link(index)
+        in ASTNode
+          if yield link
+            set_link(index, nil, observers)
+            emptied = true
+          end
+        in Array(ASTNode)
+          link.reject! { |node| yield node }
+        in Nil
+        end
+      end
+      compact_links if emptied
+    end
+
+    private def link(index : Int32) : ASTNode | Array(ASTNode) | Nil
+      {% begin %}
+        case index
+        {% for index in 0...LINK_SLOTS - 1 %}
+          when {{index}} then @link{{index}}
+        {% end %}
+        else @link{{LINK_SLOTS - 1}}
+        end
+      {% end %}
+    end
+
+    private def set_link(index : Int32, link : ASTNode | Array(ASTNode) | Nil, observers : Bool) : Nil
+      {% begin %}
+        case index
+        {% for index in 0...LINK_SLOTS - 1 %}
+          when {{index}} then @link{{index}} = link
+        {% end %}
+        else @link{{LINK_SLOTS - 1}} = link
+        end
+      {% end %}
+      if observers
+        self.link_kinds = link_kinds | (1_u8 << index)
+      else
+        self.link_kinds = link_kinds & ~(1_u8 << index)
+      end
+    end
+
+    private def observer_link?(index : Int32) : Bool
+      link_kinds.bit(index) == 1
+    end
+
+    # Returns the number of used slots, which come first.
+    private def used_links : Int32
+      LINK_SLOTS.times do |index|
+        return index if link(index).nil?
+      end
+      LINK_SLOTS
+    end
+
+    # Returns the index of a slot holding an empty array.
+    private def empty_link_index : Int32?
+      LINK_SLOTS.times do |index|
+        link = link(index)
+        return index if link.is_a?(Array(ASTNode)) && link.empty?
+      end
+      nil
+    end
+
+    # Returns the index of the last used slot of a kind before slot `before`.
+    private def last_link_index(observers : Bool, *, before : Int32 = LINK_SLOTS) : Int32?
+      (before - 1).downto(0) do |index|
+        return index if !link(index).nil? && observer_link?(index) == observers
+      end
+      nil
+    end
+
+    # Moves the used slots to the front, keeping their order.
+    private def compact_links : Nil
+      target = 0
+      LINK_SLOTS.times do |index|
+        if link = link(index)
+          set_link(target, link, observer_link?(index)) unless target == index
+          target += 1
+        end
+      end
+      (target...LINK_SLOTS).each { |index| set_link(index, nil, false) }
+    end
+
     property enclosing_call : Call?
 
     @type : Type?
@@ -176,7 +369,7 @@ module Crystal
 
     def bind_to(node : ASTNode) : Nil
       bind(node) do
-        @dependencies.push node
+        dependencies.push node
         node.add_observer self
       end
     end
@@ -185,7 +378,7 @@ module Crystal
       return if nodes.empty?
 
       bind do
-        @dependencies.concat nodes
+        dependencies.concat nodes
         nodes.each &.add_observer self
       end
     end
@@ -216,7 +409,7 @@ module Crystal
     end
 
     def type_from_dependencies : Type?
-      Type.merge @dependencies
+      Type.merge dependencies
     end
 
     def unbind_from(nodes : Nil)
@@ -224,21 +417,29 @@ module Crystal
     end
 
     def unbind_from(node : ASTNode)
-      @dependencies.reject! &.same?(node)
+      dependencies.reject! &.same?(node)
       node.remove_observer self
     end
 
     def unbind_from(nodes : Enumerable(ASTNode))
-      @dependencies.reject! { |dep| nodes.any? &.same?(dep) }
+      dependencies.reject! { |dep| nodes.any? &.same?(dep) }
       nodes.each &.remove_observer self
     end
 
+    # Unbinds this node from all its dependencies. Pops them one at a time
+    # because `dependencies` is a view of the slots that unbinding changes.
+    def unbind_all : Nil
+      while dependency = dependencies.pop?
+        dependency.remove_observer self
+      end
+    end
+
     def add_observer(observer)
-      @observers.push observer
+      observers.push observer
     end
 
     def remove_observer(observer)
-      @observers.try &.reject! &.same?(observer)
+      observers.reject! &.same?(observer)
     end
 
     def set_enclosing_call(enclosing_call)
@@ -260,9 +461,9 @@ module Crystal
     end
 
     def notify_observers
-      @observers.try &.each &.update self
+      observers.each &.update self
       @enclosing_call.try &.recalculate
-      @observers.try &.each &.propagate
+      observers.each &.propagate
       @enclosing_call.try &.propagate
     end
 
