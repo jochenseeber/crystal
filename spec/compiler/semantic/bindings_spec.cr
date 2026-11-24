@@ -290,16 +290,21 @@ describe "Semantic: bindings" do
     b = a ? 1 : 0
     CRYSTAL
 
-  it "releases the links of a typed program and keeps what codegen reads" do
+  it "releases the links and visitors of a typed program and keeps what codegen reads" do
     result = semantic(release_bindings_code)
     program = result.program
     program.release_bindings = true
+    program.release_visitors = true
     typed_def = program.def_instances.values.find!(&.name.== "foo")
     vars = program.vars.values + typed_def.vars.not_nil!.values
     nilable = vars.select(&.dependencies.any?(&.same?(program.nil_var)))
     nilable.map(&.name).should eq(["y"])
+    call = result.node.as(Expressions).expressions.compact_map(&.as?(Assign).try(&.value.as?(Call))).first
+    call.parent_visitor?.should_not be_nil
 
     program.release_bindings(result.node)
+
+    call.parent_visitor?.should be_nil
 
     vars.each do |var|
       var.dependencies.should be_empty
@@ -309,15 +314,20 @@ describe "Semantic: bindings" do
     typed_def.body.dependencies.should be_empty
   end
 
-  it "keeps the links unless asked to release them" do
-    result = semantic(release_bindings_code)
-    program = result.program
-    program.release_bindings = false
-    typed_def = program.def_instances.values.find!(&.name.== "foo")
+  {% for flags in [{false, false}, {true, false}, {false, true}] %}
+    it "releases the links: {{flags[0]}}, the visitors: {{flags[1]}}" do
+      result = semantic(release_bindings_code)
+      program = result.program
+      program.release_bindings = {{flags[0]}}
+      program.release_visitors = {{flags[1]}}
+      typed_def = program.def_instances.values.find!(&.name.== "foo")
+      call = result.node.as(Expressions).expressions.compact_map(&.as?(Assign).try(&.value.as?(Call))).first
 
-    program.release_bindings(result.node)
+      program.release_bindings(result.node)
 
-    typed_def.dependencies.should_not be_empty
-    program.vars["a"].dependencies.should_not be_empty
-  end
+      typed_def.dependencies.empty?.should eq({{flags[0]}})
+      program.vars["a"].dependencies.empty?.should eq({{flags[0]}})
+      call.parent_visitor?.nil?.should eq({{flags[1]}})
+    end
+  {% end %}
 end

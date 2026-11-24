@@ -147,6 +147,10 @@ module Crystal
     # the type inference uses (`ASTBase#release_links`).
     property? release_bindings = false
 
+    # If `true`, `#release_bindings` drops the visitors and binders that
+    # calls, blocks and constants keep for the type inference.
+    property? release_visitors = false
+
     # The main filename of this program
     property filename : String?
 
