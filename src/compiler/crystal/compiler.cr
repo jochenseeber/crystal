@@ -100,6 +100,11 @@ module Crystal
     # are removed before codegen (see `Program#release_bindings?`).
     property? release_bindings = false
 
+    # If `true`, the visitors and binders that calls, blocks and constants
+    # keep for the type inference are dropped before codegen (see
+    # `Program#release_visitors?`).
+    property? release_visitors = false
+
     # Maximum number of LLVM modules that are compiled in parallel
     property n_threads : Int32 = {% if Fiber.has_constant?(:ExecutionContext) %}
       Fiber::ExecutionContext.default_workers_count
@@ -307,6 +312,7 @@ module Crystal
       program.stdout = stdout
       program.show_error_trace = show_error_trace?
       program.release_bindings = release_bindings?
+      program.release_visitors = release_visitors?
       program.progress_tracker = @progress_tracker
       program.warnings = @warnings
       program.optimization_mode = @optimization_mode
@@ -364,7 +370,7 @@ module Crystal
         end
       {% end %}
 
-      if program.release_bindings?
+      if program.release_bindings? || program.release_visitors?
         @progress_tracker.stage("Codegen (release bindings)") do
           program.release_bindings node
         end

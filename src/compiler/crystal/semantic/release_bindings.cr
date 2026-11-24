@@ -5,14 +5,16 @@ module Crystal
     # :nodoc:
     #
     # Removes the links between nodes that only the type inference uses
-    # (`ASTBase#release_links`) if `#release_bindings?` is set. Called before
-    # codegen: once types no longer change, the links only keep alive nodes
-    # that nothing else needs, such as `TypeFilteredNode`s and the `MetaVar`s
-    # of single branches.
+    # (`ASTBase#release_links`) if `#release_bindings?` is set, and the
+    # visitors and binders that calls, blocks and constants keep for it if
+    # `#release_visitors?` is set. Called before codegen: once types no
+    # longer change, these only keep alive what nothing else needs, such as
+    # `TypeFilteredNode`s, the `MetaVar`s of single branches and the
+    # variables of each visitor.
     #
     # The interpreter types code while it runs and never calls this.
     def release_bindings(node : ASTNode) : Nil
-      return unless release_bindings?
+      return unless release_bindings? || release_visitors?
       return if @bindings_released
       @bindings_released = true
 
@@ -26,15 +28,19 @@ module Crystal
   # that belong to each of them.
   class BindingsReleaser < Visitor
     @defs = Set(Def).new.compare_by_identity
-    @visitors = Set(MainVisitor).new.compare_by_identity
+
+    @links : Bool
+    @visitors : Bool
 
     def initialize(@program : Program)
+      @links = program.release_bindings?
+      @visitors = program.release_visitors?
     end
 
     def release(node : ASTNode) : Nil
       node.accept self
       # Observed by every variable that can be nil before an assignment.
-      @program.nil_var.release_links
+      @program.nil_var.release_links if @links
       release_vars @program.vars
       @program.file_modules.each_value do |file_module|
         release_vars file_module.vars?
@@ -68,11 +74,11 @@ module Crystal
       end
 
       if type.is_a?(InstanceVarContainer)
-        type.@instance_vars.try &.each_value &.release_links
+        type.@instance_vars.try &.each_value &.release_links if @links
       end
 
       if type.is_a?(ClassVarContainer)
-        type.class_vars?.try &.each_value &.release_links
+        type.class_vars?.try &.each_value &.release_links if @links
       end
 
       if type.is_a?(InstanceVarInitializerContainer)
@@ -85,22 +91,22 @@ module Crystal
       if type.is_a?(Const)
         type.value.accept self
         type.fake_def.try &.accept self
-        release_visitor type.visitor
+        type.visitor = nil if @visitors
       end
     end
 
     def visit(node : ASTNode)
-      node.release_links
+      release_links node
       true
     end
 
     def visit(node : MetaVar)
-      release_var node
+      release_var node if @links
       true
     end
 
     def visit(node : ExpandableNode)
-      node.release_links
+      release_links node
       node.expanded.try &.accept self
       true
     end
@@ -108,71 +114,64 @@ module Crystal
     def visit(node : Def)
       return false unless @defs.add?(node)
 
-      node.release_links
+      release_links node
       release_vars node.vars
       true
     end
 
     def visit(node : Call)
-      node.release_links
+      release_links node
       node.target_defs.try &.each &.accept(self)
       node.expanded.try &.accept self
       release_vars node.before_vars
-      release_visitor node.parent_visitor?
+      node.release_parent_visitor if @visitors
       true
     end
 
     def visit(node : Block)
-      node.release_links
-      if binder = node.binder
-        binder.release_links
-        binder.@yields.each { |_, vars| vars.try &.each &.release_links }
+      release_links node
+      if @visitors
+        node.binder = nil
+        node.after_vars = nil
       end
-      node.@break.try &.release_links
+      node.@break.try { |break_var| release_links break_var }
       node.fun_literal.try &.accept self
       release_vars node.vars
-      release_vars node.after_vars
       true
     end
 
     def visit(node : While)
-      node.release_links
+      release_links node
       node.break_vars.try &.each { |vars| release_vars vars }
       true
     end
 
     def visit(node : Yield)
-      node.release_links
+      release_links node
       node.expanded.try &.accept self
       true
     end
 
     def visit(node : ProcPointer)
-      node.release_links
+      release_links node
       node.expanded.try &.accept self
       true
     end
 
     def visit(node : IsA)
-      node.release_links
+      release_links node
       node.syntax_replacement.try &.accept self
       true
     end
 
-    private def release_visitor(visitor : MainVisitor?) : Nil
-      return unless visitor
-      return unless @visitors.add?(visitor)
-
-      release_vars visitor.vars
-      release_vars visitor.meta_vars
-      release_vars visitor.@while_vars
-      visitor.all_exception_handler_vars.try &.each { |vars| release_vars vars }
-      visitor.yield_vars.try &.each &.release_links
-      visitor.@found_self_in_initialize_call.try &.each &.release_links
-      visitor.@used_ivars_in_calls_in_initialize.try &.each_value &.each &.release_links
+    private def release_links(node : ASTBase) : Nil
+      node.release_links if @links
     end
 
+    # Variables only hold links, so they are skipped when the links stay.
     private def release_vars(vars : MetaVars?) : Nil
+      return unless @links
+
       vars.try &.each_value { |var| release_var var }
     end
 
@@ -193,6 +192,16 @@ module Crystal
           local_var.release_links
         end
       end
+    end
+  end
+
+  class Call
+    # :nodoc:
+    #
+    # Drops the visitor that typed this call, which it keeps to type it
+    # again (see `Program#release_bindings`).
+    def release_parent_visitor : Nil
+      @parent_visitor = nil
     end
   end
 end
